@@ -6,6 +6,8 @@ simplefilter(action='ignore', category=FutureWarning)
 simplefilter(action='ignore', category=DeprecationWarning)
 
 import os
+os.environ['CUDA_VISIBLE_DEVICES'] = '0,1,2,3'
+
 import re
 import time
 import torch

@@ -75,7 +75,7 @@ def parse_args():
     parser.add_argument('--label_screen', type=str, default=None)
     parser.add_argument('--logging_num', type=int, default=None)
     parser.add_argument('--testing_num', type=int, default=None)
-    parser.add_argument('--local_rank', default=-1, type=int)
+    parser.add_argument('--local_rank', default=0, type=int)
     parser.add_argument('--node_rank', default=0, type=int)
 
     # ============== fusion methods ==============
