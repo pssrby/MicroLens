@@ -9,6 +9,7 @@ class VideoMaeEncoder(torch.nn.Module):
         # self.activate = nn.Tanh()
         self.activate = nn.GELU()
         self.args = args
+        self.layer_norm = nn.LayerNorm(args.word_embedding_dim)
         self.avg_pool = nn.AdaptiveAvgPool2d((1, args.word_embedding_dim))
         self.padding_label = torch.Tensor([-1]).to(args.local_rank)
         # self.add_nor = nn.LayerNorm(args.word_embedding_dim, eps=1e-6) ### 
@@ -17,6 +18,7 @@ class VideoMaeEncoder(torch.nn.Module):
     def forward(self, item_content):
         # torch.Size([112, 4, 3, 224, 224])
         item_scoring = self.video_net(item_content).last_hidden_state
+        item_scoring = self.layer_norm(item_scoring)
         # torch.Size([112, 392, 768])
         item_scoring = self.avg_pool(item_scoring)
         # torch.Size([112, 1, 768])
