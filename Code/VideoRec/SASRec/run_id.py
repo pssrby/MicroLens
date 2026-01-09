@@ -1,16 +1,17 @@
 import os
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-root_data_dir = '/home/public/data/scale_datasets/'
-root_model_dir = '/home/public/data/'
+root_data_dir = '/data4/guangyi/PMMRec/'
+root_model_dir = '/data4/guangyi/MicroLens/model/'
 
-dataset = 'core_datasets'
-tag = '10wu'
-behaviors = tag + '_ks_pairs.tsv'
-text_data = tag + '_ks_title.csv'
-image_data = tag + '_ks_cover.lmdb'
+dataset = 'bili_food'
+tag = 'bilibili_food_'
+behaviors = tag + 'pairs.tsv'
+text_data = tag + 'title.csv'
+image_data = tag + 'cover.lmdb'
+frame_interval = 1
 frame_no = 5
-video_data = tag + '_ks_fi5_fn'+str(frame_no)+'_frames.lmdb'
+video_data = tag + 'frames_interval_'+str(frame_interval)+'_number_'+str(frame_no)+'.lmdb'
 max_seq_len_list = [10]
 
 logging_num = 10
@@ -29,18 +30,18 @@ text_freeze_paras_before = 165
 image_freeze_paras_before = 164
 video_freeze_paras_before = 152
 
-mode = 'train' # train test
+mode = 'test' # train test
 item_tower = 'id' # modal, text, image, video, id
 
 epoch = 50
-load_ckpt_name = 'None'
-# load_ckpt_name = 'epoch-200.pt'
+# load_ckpt_name = 'None'
+load_ckpt_name = 'epoch-50.pt'
 
 weight_decay = 0.1
 drop_rate = 0.1
 batch_size_list = [512]
 
-embedding_dim_list = [1024]
+embedding_dim_list = [64, 128, 256, 512, 768]
 lr_list = [1e-4]
 text_fine_tune_lr_list = [1e-4]
 image_fine_tune_lr_list = [1e-4]
@@ -65,9 +66,9 @@ for batch_size in batch_size_list:
                         item_tower, batch_size, embedding_dim, lr,
                         drop_rate, weight_decay, max_seq_len)
 
-                run_py = "CUDA_VISIBLE_DEVICES='6' \
-                        /opt/anaconda3/envs/torch1.8/bin/python -m torch.distributed.launch \
-                        --nproc_per_node 1 --master_port 130 main.py \
+                run_py = "CUDA_VISIBLE_DEVICES='0,1,2,3' \
+                        python -m torch.distributed.launch \
+                        --nproc_per_node 4 main.py \
                         --root_data_dir {} --root_model_dir {} --dataset {} --behaviors {} --text_data {}  --image_data {} --video_data {}\
                         --mode {} --item_tower {} --load_ckpt_name {} --label_screen {} --logging_num {} --save_step {}\
                         --testing_num {} --weight_decay {} --drop_rate {} --batch_size {} --lr {} --embedding_dim {}\

@@ -59,11 +59,11 @@ slowfast-50: 9999/120 270/120 153/60 0/20 0/20-scratch
 slowfast16x8-101: 9999/120 576/120 153/25 0/15 0/15-scratch
 '''
 video_model_load = 'video-mae' # mvit-base-32x3 slowfast-50 slowfast16x8-101
-video_freeze_paras_before = 270 # 326 270 576
+video_freeze_paras_before = 576 # 326 270 576
 batch_size_list = [20] # 30 120 120
 
 mode = 'train' # train test
-item_tower = 'video' # modal, text, image, video, id
+item_tower = 'id' # modal, text, image, video, id
 
 epoch = 50
 load_ckpt_name = 'None'

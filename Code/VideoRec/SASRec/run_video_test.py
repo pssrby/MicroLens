@@ -1,17 +1,18 @@
 import os
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-root_data_dir = '/home/public/data/scale_datasets/'
-root_model_dir = '/home/public/data/'
+root_data_dir = '/data4/guangyi/MicroLens-Dataset/100k/'
+root_model_dir = '/data4/guangyi/MicroLens/model/'
 
-dataset = 'core_datasets'
-tag = '10wu'
-behaviors = tag + '_ks_pairs.tsv'
+dataset = 'MicroLens'
+tag = 'MicroLens-100k_'
+behaviors = tag + 'pairs.tsv'
 text_data = tag + '_ks_title.csv'
 image_data = tag + '_ks_cover.lmdb'
 frame_interval = 1
 frame_no = 5
-video_data = tag + '_ks_fi'+str(frame_interval)+'_fn'+str(frame_no)+'_frames.lmdb'
+# video_data = tag + '_ks_fi'+str(frame_interval)+'_fn'+str(frame_no)+'_frames.lmdb'
+video_data = tag + 'frames_interval_'+str(frame_interval)+'_number_'+str(frame_no)+'.lmdb'
 max_seq_len_list = [10]
 
 logging_num = 10

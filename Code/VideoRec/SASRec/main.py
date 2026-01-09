@@ -263,7 +263,10 @@ def train(args, model_dir, Log_file, Log_screen, start_time, local_rank):
         Log_file.info('read behaviors...')
         item_num, item_id_to_keys, users_train, users_valid, users_history_for_valid, pop_prob_list = \
             read_behaviors(before_item_id_to_keys, before_item_name_to_id, Log_file, args)
+    max_len = [len(seq) for _, seq in users_train.items()]
 
+    # print("max len of users seq is ", max_len)
+    # os._exit(0)
     # ========================================== Building Model ===========================================
     Log_file.info('build model...')
     model = Model(args, pop_prob_list, item_num, text_model, image_model, video_model, item_content).to(local_rank)
@@ -295,7 +298,7 @@ def train(args, model_dir, Log_file, Log_screen, start_time, local_rank):
     #     print(index, name, param.shape)
     
     Log_file.info('model.cuda()...')
-    model = DDP(model, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=True)
+    model = DDP(model, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=False)
     Log_file.info(model)
     # ============================ Dataset and Dataloader ============================
 
@@ -554,7 +557,7 @@ def train(args, model_dir, Log_file, Log_screen, start_time, local_rank):
                 need_break = True
                 break
 
-            #steps_for_log = 1
+            steps_for_log = 1
             if batch_index % steps_for_log == 0:
                 Log_file.info('Ed: {}, batch loss: {:.3f}, sum loss: {:.3f}, align: {:.3f}, uniform: {:.3f}'.format(
                     batch_index * args.batch_size, loss.data / batch_index, loss.data, align / batch_index, uniform / batch_index))
