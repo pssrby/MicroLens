@@ -253,10 +253,7 @@ def train(args, model_dir, Log_file, Log_screen, start_time, local_rank):
 
     if 'modal' == args.item_tower or 'image' == args.item_tower or 'video' == args.item_tower or 'id' == args.item_tower:
         Log_file.info('read images/videos/id...')
-        if 'video' == args.item_tower:
-            before_item_id_to_keys, before_item_name_to_id = read_videos(args.min_video_no, args.max_video_no)
-        else:
-            before_item_id_to_keys, before_item_name_to_id = read_items(args)
+        before_item_id_to_keys, before_item_name_to_id = read_items(args)
 
         Log_file.info('read behaviors...')
         item_num, item_id_to_keys, users_train, users_valid, users_history_for_valid, pop_prob_list = \
@@ -552,7 +549,7 @@ def train(args, model_dir, Log_file, Log_screen, start_time, local_rank):
                 need_break = True
                 break
 
-            #steps_for_log = 1
+            steps_for_log = 1
             if batch_index % steps_for_log == 0:
                 Log_file.info('Ed: {}, batch loss: {:.3f}, sum loss: {:.3f}, align: {:.3f}, uniform: {:.3f}'.format(
                     batch_index * args.batch_size, loss.data / batch_index, loss.data, align / batch_index, uniform / batch_index))
