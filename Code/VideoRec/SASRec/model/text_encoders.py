@@ -18,6 +18,10 @@ class TextEncoder(torch.nn.Module):
         text_ids = torch.narrow(text, 1, 0, num_words)
         text_attmask = torch.narrow(text, 1, num_words, num_words)
 
+        empty_mask_mask = (text_attmask.sum(dim=-1) == 0)
+        if empty_mask_mask.any():
+            text_attmask[empty_mask_mask, 0] = 1
+
         hidden_states = self.bert_model(input_ids=text_ids, attention_mask=text_attmask)[0]
         # cls_after_pooler = self.activate(self.pooler(hidden_states[:, 0]))
         cls_after_pooler = self.pooler(hidden_states[:, 0]) 
