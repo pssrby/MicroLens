@@ -22,7 +22,9 @@ def read_texts(tokenizer, args):
     with open(text_path, 'r', encoding='utf-8') as f:
         for line in f:
             splited = line.strip('\n').split(',')
-            doc_name, title = splited[0], str(','.join(splited[1:]))
+            doc_name, title = splited[0], str(','.join(splited[1:])).strip()
+            if len(title) == 0:
+                continue
             # if 'scale' in args.dataset:
             #     splited = line.strip('\n').split(',')
             #     doc_name, title = splited[0], str(','.join(splited[1:]))
@@ -160,11 +162,12 @@ def read_behaviors_text(item_dic, before_item_name_to_index, before_item_index_t
             user_id = splited[0]
             history_item_name = splited[1].split(' ')
 
+            history_item_name = history_item_name[-(max_seq_len+3):]
+            item_ids_sub_seq = [before_item_name_to_index[i] for i in history_item_name if i in before_item_name_to_index]
+            history_item_name = [before_item_index_to_name[i] for i in item_ids_sub_seq]
+
             if len(history_item_name) < min_seq_len:
                 continue
-
-            history_item_name = history_item_name[-(max_seq_len+3):]
-            item_ids_sub_seq = [before_item_name_to_index[i] for i in history_item_name]
 
             user_seq_dic[user_id] = history_item_name
             for item_id in item_ids_sub_seq:
