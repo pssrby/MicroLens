@@ -599,10 +599,10 @@ def eval(now_epoch, max_epoch, early_stop_epoch, max_eval_value, early_stop_coun
         item_scoring_text = get_item_text_score(model, item_content, batch_size, args, local_rank)
         Log_file.info('get_image_scoring...')
         item_scoring_image = get_item_image_score(model, item_num, item_id_to_keys, batch_size, args, local_rank)
-        Log_file.info('get_video_scoring...')
-        item_scoring_video = get_item_video_score(model, item_num, item_id_to_keys, batch_size, args, local_rank)
+        # Log_file.info('get_video_scoring...')
+        # item_scoring_video = get_item_video_score(model, item_num, item_id_to_keys, batch_size, args, local_rank)
 
-        item_scoring = get_fusion_score(model ,item_scoring_text, item_scoring_image, item_scoring_video, local_rank, args)
+        item_scoring = get_fusion_score(model ,item_scoring_text, item_scoring_image, local_rank, args)
 
     elif 'id' == args.item_tower:
         item_scoring = get_item_id_score(model, item_num, batch_size, args, local_rank)

@@ -45,42 +45,43 @@ class Model(torch.nn.Module):
             self.text_encoder = TextEmbedding(args=args, bert_model=bert_model)
         
         if 'video' == args.item_tower or 'modal' == args.item_tower:
-            if 'mae' in args.video_model_load:
-                self.video_encoder = VideoMaeEncoder(video_net=video_net, args=args)
-            elif 'r3d18' in args.video_model_load:
-                self.video_encoder = R3D18Encoder(video_net=video_net, args=args)
-            elif 'r3d50' in args.video_model_load:
-                self.video_encoder = R3D50Encoder(video_net=video_net, args=args)
-            elif 'c2d50' in args.video_model_load:
-                self.video_encoder = C2D50Encoder(video_net=video_net, args=args)
-            elif 'i3d50' in args.video_model_load:
-                self.video_encoder = I3D50Encoder(video_net=video_net, args=args)
-            elif 'csn101' in args.video_model_load:
-                self.video_encoder = CSN101Encoder(video_net=video_net, args=args)
-            elif 'slow50' in args.video_model_load:
-                self.video_encoder = SLOW50Encoder(video_net=video_net, args=args)
-            elif 'efficient-x3d-s' in args.video_model_load:
-                self.video_encoder = EX3DSEncoder(video_net=video_net, args=args)
-            elif 'efficient-x3d-xs' in args.video_model_load:
-                self.video_encoder = EX3DXSEncoder(video_net=video_net, args=args)
-            elif 'x3d-xs' in args.video_model_load:
-                self.video_encoder = X3DXSEncoder(video_net=video_net, args=args)
-            elif 'x3d-s' in args.video_model_load:
-                self.video_encoder = X3DSEncoder(video_net=video_net, args=args)
-            elif 'x3d-m' in args.video_model_load:
-                self.video_encoder = X3DMEncoder(video_net=video_net, args=args)
-            elif 'x3d-l' in args.video_model_load:
-                self.video_encoder = X3DLEncoder(video_net=video_net, args=args)
-            elif 'mvit-base-16' in args.video_model_load:
-                self.video_encoder = MVIT16Encoder(video_net=video_net, args=args)
-            elif 'mvit-base-16x4' in args.video_model_load:
-                self.video_encoder = MVIT16X4Encoder(video_net=video_net, args=args)
-            elif 'mvit-base-32x3' in args.video_model_load:
-                self.video_encoder = MVIT32X3Encoder(video_net=video_net, args=args)
-            elif 'slowfast-50' in args.video_model_load:
-                self.video_encoder = SLOWFAST50Encoder(video_net=video_net, args=args)
-            elif 'slowfast16x8-101' in args.video_model_load:
-                self.video_encoder = SLOWFAST16X8101Encoder(video_net=video_net, args=args)
+            pass
+            # if 'mae' in args.video_model_load:
+            #     self.video_encoder = VideoMaeEncoder(video_net=video_net, args=args)
+            # elif 'r3d18' in args.video_model_load:
+            #     self.video_encoder = R3D18Encoder(video_net=video_net, args=args)
+            # elif 'r3d50' in args.video_model_load:
+            #     self.video_encoder = R3D50Encoder(video_net=video_net, args=args)
+            # elif 'c2d50' in args.video_model_load:
+            #     self.video_encoder = C2D50Encoder(video_net=video_net, args=args)
+            # elif 'i3d50' in args.video_model_load:
+            #     self.video_encoder = I3D50Encoder(video_net=video_net, args=args)
+            # elif 'csn101' in args.video_model_load:
+            #     self.video_encoder = CSN101Encoder(video_net=video_net, args=args)
+            # elif 'slow50' in args.video_model_load:
+            #     self.video_encoder = SLOW50Encoder(video_net=video_net, args=args)
+            # elif 'efficient-x3d-s' in args.video_model_load:
+            #     self.video_encoder = EX3DSEncoder(video_net=video_net, args=args)
+            # elif 'efficient-x3d-xs' in args.video_model_load:
+            #     self.video_encoder = EX3DXSEncoder(video_net=video_net, args=args)
+            # elif 'x3d-xs' in args.video_model_load:
+            #     self.video_encoder = X3DXSEncoder(video_net=video_net, args=args)
+            # elif 'x3d-s' in args.video_model_load:
+            #     self.video_encoder = X3DSEncoder(video_net=video_net, args=args)
+            # elif 'x3d-m' in args.video_model_load:
+            #     self.video_encoder = X3DMEncoder(video_net=video_net, args=args)
+            # elif 'x3d-l' in args.video_model_load:
+            #     self.video_encoder = X3DLEncoder(video_net=video_net, args=args)
+            # elif 'mvit-base-16' in args.video_model_load:
+            #     self.video_encoder = MVIT16Encoder(video_net=video_net, args=args)
+            # elif 'mvit-base-16x4' in args.video_model_load:
+            #     self.video_encoder = MVIT16X4Encoder(video_net=video_net, args=args)
+            # elif 'mvit-base-32x3' in args.video_model_load:
+            #     self.video_encoder = MVIT32X3Encoder(video_net=video_net, args=args)
+            # elif 'slowfast-50' in args.video_model_load:
+            #     self.video_encoder = SLOWFAST50Encoder(video_net=video_net, args=args)
+            # elif 'slowfast16x8-101' in args.video_model_load:
+            #     self.video_encoder = SLOWFAST16X8101Encoder(video_net=video_net, args=args)
 
         self.id_encoder = nn.Embedding(item_num + 1, args.embedding_dim, padding_idx=0)
         xavier_normal_(self.id_encoder.weight.data)
@@ -106,8 +107,8 @@ class Model(torch.nn.Module):
         if 'modal' == args.item_tower:
             input_all_text = self.text_encoder(sample_items_text.long())
             input_all_image = self.image_encoder(sample_items_image)
-            input_all_video = self.video_encoder(sample_items_video)
-            input_embs = self.fusion_module(input_all_text, input_all_image, input_all_video)
+            # input_all_video = self.video_encoder(sample_items_video)
+            score_embs = self.fusion_module(input_all_text, input_all_image)
         elif 'text' == args.item_tower:
             score_embs = self.text_encoder(sample_items_text.long())
         elif 'image' == args.item_tower:

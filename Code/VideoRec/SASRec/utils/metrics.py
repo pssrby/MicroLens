@@ -103,14 +103,14 @@ def get_item_video_score(model, item_num, item_id_to_keys, test_batch_size, args
             item_scoring.extend(item_emb)
     return torch.stack(tensors=item_scoring, dim=0).to(torch.device('cpu')).detach()
 
-def get_fusion_score(model, item_scoring_text, item_scoring_image, item_scoring_video, local_rank, args):
+def get_fusion_score(model, item_scoring_text, item_scoring_image, local_rank, args):
     model.eval()
     with torch.no_grad():
         if 'modal' in args.item_tower:
             item_scoring_text = item_scoring_text.to(local_rank)
             item_scoring_image = item_scoring_image.to(local_rank)
-            item_scoring_video = item_scoring_video.to(local_rank)
-            item_scoring = model.module.fusion_module(item_scoring_text, item_scoring_image, item_scoring_video)
+            # item_scoring_video = item_scoring_video.to(local_rank)
+            item_scoring = model.module.fusion_module(item_scoring_text, item_scoring_image)
 
     return item_scoring.to(torch.device('cpu')).detach()
 

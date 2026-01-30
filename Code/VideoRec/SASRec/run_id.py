@@ -1,8 +1,8 @@
 import os
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-root_data_dir = '/data2/guangyi/dataset/'
-root_model_dir = '/data2/guangyi/model/'
+root_data_dir = '~/dataset/'
+root_model_dir = '~/model/'
 
 dataset = 'MicroLens-100k-Dataset'
 tag = 'MicroLens-100k_'
@@ -30,16 +30,16 @@ image_freeze_paras_before = 164
 video_freeze_paras_before = 152
 
 mode = 'train' # train test
-item_tower = 'image' # modal, text, image, video, id
+item_tower = 'modal' # modal, text, image, video, id
 
 epoch = 50
-# load_ckpt_name = 'None'
+load_ckpt_name = 'None'
 # load_ckpt_name = 'epoch-200.pt'
-load_ckpt_name = 'epoch-2.pt'
+load_ckpt_name = 'epoch-27.pt'
 
 weight_decay = 0.1
 drop_rate = 0.1
-batch_size_list = [128]
+batch_size_list = [80]
 
 embedding_dim_list = [512]
 lr_list = [1e-4]
@@ -52,7 +52,7 @@ scheduler = 'step_schedule_with_warmup'
 scheduler_gap = 1
 scheduler_alpha = 1
 version = 'v1'
-num_workers = 16
+num_workers = 3
 
 for batch_size in batch_size_list:
     for embedding_dim in embedding_dim_list:
