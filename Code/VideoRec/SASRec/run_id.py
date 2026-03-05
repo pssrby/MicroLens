@@ -1,8 +1,8 @@
 import os
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-root_data_dir = '/data2/guangyi/dataset/'
-root_model_dir = '/data2/guangyi/model/'
+root_data_dir = '~/dataset/'
+root_model_dir = '~/model/'
 
 dataset = 'MicroLens-100k-Dataset'
 tag = 'MicroLens-100k_'
@@ -29,17 +29,17 @@ text_freeze_paras_before = 165
 image_freeze_paras_before = 164
 video_freeze_paras_before = 152
 
-mode = 'train' # train test
-item_tower = 'image' # modal, text, image, video, id
+mode = 'test' # train test
+item_tower = 'text' # modal, text, image, video, id
 
 epoch = 50
-# load_ckpt_name = 'None'
+load_ckpt_name = 'None'
 # load_ckpt_name = 'epoch-200.pt'
-load_ckpt_name = 'epoch-2.pt'
+# load_ckpt_name = 'epoch-49.pt'
 
 weight_decay = 0.1
 drop_rate = 0.1
-batch_size_list = [128]
+batch_size_list = [240]
 
 embedding_dim_list = [512]
 lr_list = [1e-4]
@@ -67,9 +67,9 @@ for batch_size in batch_size_list:
                         item_tower, batch_size, embedding_dim, lr,
                         drop_rate, weight_decay, max_seq_len)
 
-                run_py = "CUDA_VISIBLE_DEVICES='6,7' \
+                run_py = "CUDA_VISIBLE_DEVICES='0,1,2,3' \
                         torchrun \
-                        --nproc_per_node 2 main.py \
+                        --nproc_per_node 4 main.py \
                         --root_data_dir {} --root_model_dir {} --dataset {} --behaviors {} --text_data {}  --image_data {} --video_data {}\
                         --mode {} --item_tower {} --load_ckpt_name {} --label_screen {} --logging_num {} --save_step {}\
                         --testing_num {} --weight_decay {} --drop_rate {} --batch_size {} --lr {} --embedding_dim {}\
