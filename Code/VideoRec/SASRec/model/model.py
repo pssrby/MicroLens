@@ -91,6 +91,10 @@ class Model(torch.nn.Module):
         fusion = args.fusion_method.lower()
         if fusion == 'concat' and args.item_tower == 'modal':
             self.fusion_module = ConcatFusion(args=args)
+        if fusion == 'gated' and args.item_tower == 'modal':
+            self.fusion_module = GatedFusion(args=args)
+        if fusion == 'film' and args.item_tower == 'modal':
+            self.fusion_module = FiLM(args=args)
 
     def alignment(self, x, y):
         x, y = F.normalize(x, dim=-1), F.normalize(y, dim=-1)

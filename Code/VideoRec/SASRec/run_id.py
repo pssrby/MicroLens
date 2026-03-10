@@ -51,8 +51,9 @@ index_list = [0]
 scheduler = 'step_schedule_with_warmup'
 scheduler_gap = 1
 scheduler_alpha = 1
-version = 'v1'
+version = 'vfilm'
 num_workers = 3
+fusion_method = 'film'
 
 for batch_size in batch_size_list:
     for embedding_dim in embedding_dim_list:
@@ -67,7 +68,7 @@ for batch_size in batch_size_list:
                         item_tower, batch_size, embedding_dim, lr,
                         drop_rate, weight_decay, max_seq_len)
 
-                run_py = "CUDA_VISIBLE_DEVICES='6,7' \
+                run_py = "CUDA_VISIBLE_DEVICES='2,3' \
                         torchrun \
                         --nproc_per_node 2 main.py \
                         --root_data_dir {} --root_model_dir {} --dataset {} --behaviors {} --text_data {}  --image_data {} --video_data {}\
@@ -78,7 +79,8 @@ for batch_size in batch_size_list:
                         --text_fine_tune_lr {} --image_fine_tune_lr {} --video_fine_tune_lr {}\
                         --scheduler {} --scheduler_gap {} --scheduler_alpha {} --max_video_no {}\
                         --version {} \
-                        --num_workers {}".format(
+                        --num_workers {} \
+                        --fusion_method {}".format(
                         root_data_dir, root_model_dir, dataset, behaviors, text_data, image_data, video_data,
                         mode, item_tower, load_ckpt_name, label_screen, logging_num, save_step,
                         testing_num,weight_decay, drop_rate, batch_size, lr, embedding_dim,
@@ -86,6 +88,6 @@ for batch_size in batch_size_list:
                         text_freeze_paras_before, image_freeze_paras_before, video_freeze_paras_before, max_seq_len, frame_no,
                         text_fine_tune_lr, image_fine_tune_lr, video_fine_tune_lr, 
                         scheduler, scheduler_gap, scheduler_alpha, max_video_no,
-                        version, num_workers)
+                        version, num_workers, fusion_method)
             
                 os.system(run_py)
