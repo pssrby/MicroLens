@@ -12,7 +12,7 @@ from .video_encoders import EX3DXSEncoder, X3DXSEncoder, X3DSEncoder, X3DMEncode
 from .video_encoders import X3DLEncoder, MVIT16Encoder, MVIT16X4Encoder, MVIT32X3Encoder
 from .video_encoders import SLOWFAST50Encoder, SLOWFAST16X8101Encoder
 from .image_encoders import VitEncoder, ResnetEncoder, MaeEncoder, SwinEncoder 
-from .fusion_module import SumFusion, ConcatFusion, FiLM, GatedFusion 
+from .fusion_module import SumFusion, ConcatFusion, FiLM, GatedFusion, MoEFusion
 from .user_encoders import User_Encoder_GRU4Rec, User_Encoder_SASRec, User_Encoder_NextItNet
 
 class Model(torch.nn.Module):
@@ -95,6 +95,11 @@ class Model(torch.nn.Module):
             self.fusion_module = GatedFusion(args=args)
         if fusion == 'film' and args.item_tower == 'modal':
             self.fusion_module = FiLM(args=args)
+        if fusion == 'moe' and args.item_tower == 'modal':
+            num_experts = getattr(args, 'moe_num_experts', 4)
+            hidden_dim = getattr(args, 'moe_hidden_dim', None)
+            dropout = getattr(args, 'moe_dropout', 0.0)
+            self.fusion_module = MoEFusion(args=args, num_experts=num_experts, hidden_dim=hidden_dim, dropout=dropout)
 
     def alignment(self, x, y):
         x, y = F.normalize(x, dim=-1), F.normalize(y, dim=-1)
