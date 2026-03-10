@@ -607,7 +607,7 @@ def eval(now_epoch, max_epoch, early_stop_epoch, max_eval_value, early_stop_coun
     elif 'id' == args.item_tower:
         item_scoring = get_item_id_score(model, item_num, batch_size, args, local_rank)
 
-    valid_Hit10, nDCG10 = eval_model(model, user_history, users_eval, item_scoring, batch_size, \
+    valid_Hit10, nDCG10, valid_Recall10, valid_MRR10, valid_MAP10, valid_Coverage10 = eval_model(model, user_history, users_eval, item_scoring, batch_size, \
         args, item_num, Log_file, mode, pop_prob_list, local_rank, now_epoch)
 
     report_time_eval(eval_start_time, Log_file)

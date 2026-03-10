@@ -41,10 +41,13 @@ def metrics_topK(y_score, y_true, item_rank, topK, local_rank):
     order = torch.argsort(y_score, descending=True)
     y_true = torch.take(y_true, order)
     rank = torch.sum(y_true * item_rank)
-    eval_ra = torch.zeros(2).to(local_rank)
+    eval_ra = torch.zeros(5).to(local_rank)
     if rank <= topK:
         eval_ra[0] = 1
         eval_ra[1] = 1 / math.log2(rank + 1)
+        eval_ra[2] = 1
+        eval_ra[3] = 1 / rank
+        eval_ra[4] = 1 / rank
     return rank, eval_ra
 
 def get_item_id_score(model, item_num, test_batch_size, args, local_rank):
@@ -125,10 +128,11 @@ def eval_model(model, user_history, eval_seq, item_scoring, test_batch_size, arg
                          num_workers=args.num_workers, pin_memory=True, sampler=test_sampler)
     model.eval()
     topK = 10
-    Log_file.info(v_or_t + '_methods   {}'.format('\t'.join(['Hit{}'.format(topK), 'nDCG{}'.format(topK)])))
+    Log_file.info(v_or_t + '_methods   {}'.format('\t'.join(['Hit{}'.format(topK), 'nDCG{}'.format(topK), 'Recall{}'.format(topK), 'MRR{}'.format(topK), 'MAP{}'.format(topK), 'Coverage{}'.format(topK)])))
     item_scoring = item_scoring.to(local_rank)
     with torch.no_grad():
         eval_all_user = []
+        topk_item_set = set()
         item_rank = torch.Tensor(np.arange(item_num) + 1).to(local_rank)
         user_list = []
         item_list = []
@@ -148,14 +152,18 @@ def eval_model(model, user_history, eval_seq, item_scoring, test_batch_size, arg
                 history = user_history[user_id].to(local_rank)
                 score[history] = -np.inf
                 score = score[1:]
+                topk_idx = torch.topk(score, topK).indices.detach().cpu().numpy() + 1
+                topk_item_set.update(topk_idx.tolist())
                 rank, res = metrics_topK(score, label, item_rank, topK, local_rank)
                 rank_list.append(rank.detach().cpu())
                 user_list.append(user_id)   
                 item_list.append(pop_prob_list[eval_seq[user_id][-1]])
                 eval_all_user.append(res)
         eval_all_user = torch.stack(tensors=eval_all_user, dim=0).t().contiguous()
-        Hit10, nDCG10 = eval_all_user
-        mean_eval = eval_concat([Hit10, nDCG10], test_sampler)
+        Hit10, nDCG10, Recall10, MRR10, MAP10 = eval_all_user
+        mean_eval = eval_concat([Hit10, nDCG10, Recall10, MRR10, MAP10], test_sampler)
+        coverage10 = len(topk_item_set) / float(item_num)
+        mean_eval.append(coverage10)
         dataset = 'ks'
         mode = args.item_tower
         # np.save('./results/{}/{}/rank_list_{}.npy'.format(dataset, mode, epoch-1), np.array(rank_list))
@@ -163,4 +171,4 @@ def eval_model(model, user_history, eval_seq, item_scoring, test_batch_size, arg
         # np.save('./results/{}/{}/item_list_{}.npy'.format(dataset, mode, epoch-1), np.array(item_list))
         # savetxt('./embeddings/embeddings-{}.csv'.format(mean_eval[0] * 100), item_scoring.to(torch.device('cpu')).detach(), delimiter=',')
         print_metrics(mean_eval, Log_file, v_or_t)
-    return mean_eval[0], mean_eval[1]
+    return mean_eval[0], mean_eval[1], mean_eval[2], mean_eval[3], mean_eval[4], mean_eval[5]

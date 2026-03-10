@@ -29,13 +29,13 @@ text_freeze_paras_before = 165
 image_freeze_paras_before = 164
 video_freeze_paras_before = 152
 
-mode = 'train' # train test
+mode = 'test' # train test
 item_tower = 'modal' # modal, text, image, video, id
 
 epoch = 50
 load_ckpt_name = 'None'
 # load_ckpt_name = 'epoch-200.pt'
-load_ckpt_name = 'epoch-27.pt'
+load_ckpt_name = 'epoch-23.pt'
 
 weight_decay = 0.1
 drop_rate = 0.1
