@@ -497,6 +497,19 @@ def train(args, model_dir, Log_file, Log_screen, start_time, local_rank):
 
             elif 'text' == args.item_tower:
                 sample_items_id, sample_items_text, log_mask = data
+# sample_items_id（LongTensor）
+# 含义：batch 里每个样本的 item id 序列（左侧 padding 后的定长序列）
+# shape：(batch_size, max_seq_len+1)
+# 里面会包含 0（padding item id）
+# sample_items_text（FloatTensor，后面会 .view(-1, args.num_words_title * 2) 再喂给 text encoder）
+# 含义：batch 里每个样本、每个位置对应的文本特征向量（= item_content[item_id]）
+# shape（解包后、还没 view 前）：(batch_size, max_seq_len+1, num_words_title*2)
+# 每个向量的结构：[input_ids (L) | attention_mask (L)]，所以长度是 2*L
+# padding 位置对应的向量是全 0（等价于 item_content[0]）
+# log_mask（FloatTensor）
+# 含义：告诉 user encoder 哪些历史位置是有效的(1) / padding(0)
+# shape：(batch_size, max_seq_len)
+# 注意它不包含最后的 target 那个位置（所以长度是 max_seq_len 而不是 max_seq_len+1）
                 sample_items_id, sample_items_text, log_mask = \
                     sample_items_id.to(local_rank), sample_items_text.to(local_rank), log_mask.to(local_rank)
                 sample_items_text = sample_items_text.view(-1, args.num_words_title * 2)

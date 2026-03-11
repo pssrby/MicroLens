@@ -75,6 +75,11 @@ class ModalDataset(Dataset):
         sample_items_id = [0] * mask_len_head + seq
 
         ##################################### Text #####################################
+        # For left-padding positions, avoid all-zero attention_mask rows.
+        # sample_items_text layout: [input_ids(L) | attention_mask(L)]
+        # Set attention_mask[0]=1 for padding rows.
+        # if mask_len_head > 0:
+        #     sample_items_text[:mask_len_head, self.text_size] = 1
         for i in range(tokens_Len):
             # pos
             sample_items_text[mask_len_head + i] = self.item_content[seq[i]]
@@ -183,6 +188,11 @@ class TextDataset(Dataset):
         
         sample_id_items = [0] * mask_len_head + seq
         sample_items = np.zeros((self.max_seq_len, self.text_size * 2))
+        # For left-padding positions, avoid all-zero attention_mask rows.
+        # sample_items layout: [input_ids(L) | attention_mask(L)]
+        # Set attention_mask[0]=1 for padding rows.
+        # if mask_len_head > 0:
+        #     sample_items[:mask_len_head, self.text_size] = 1
         for i in range(tokens_Len):
             # pos
             sample_items[mask_len_head + i] = self.item_content[seq[i]]

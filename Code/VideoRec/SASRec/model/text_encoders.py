@@ -18,14 +18,19 @@ class TextEncoder(torch.nn.Module):
         text_ids = torch.narrow(text, 1, 0, num_words)
         text_attmask = torch.narrow(text, 1, num_words, num_words)
 
-        empty_mask_mask = (text_attmask.sum(dim=-1) == 0)
-        if empty_mask_mask.any():
-            text_attmask[empty_mask_mask, 0] = 1
-
-        hidden_states = self.bert_model(input_ids=text_ids, attention_mask=text_attmask)[0]
-        # cls_after_pooler = self.activate(self.pooler(hidden_states[:, 0]))
-        cls_after_pooler = self.pooler(hidden_states[:, 0]) 
-        return cls_after_pooler
+        # Method 2: do NOT feed padding rows (item_id==0) into BERT.
+        # Padding rows typically have all-zero input_ids/attention_mask after dataset padding.
+        # We filter valid rows, run BERT only on them, then scatter back.
+        valid = (text_attmask.sum(dim=1) > 0) & (text_ids.sum(dim=1) > 0)
+        # Keep dtype consistent with BERT/pooler output (may be fp16 under AMP).
+        out = self.pooler.weight.new_zeros((batch_size, self.pooler.out_features))
+        if valid.any():
+            ids_v = text_ids[valid]
+            mask_v = text_attmask[valid]
+            hidden_states = self.bert_model(input_ids=ids_v, attention_mask=mask_v)[0]
+            cls_v = self.pooler(hidden_states[:, 0])
+            out[valid] = cls_v.to(dtype=out.dtype)
+        return out
 
 class TextEmbedding(torch.nn.Module):
     def __init__(self, args, bert_model):
