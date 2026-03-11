@@ -9,8 +9,9 @@ tag = 'MicroLens-100k_'
 behaviors = tag + 'pairs.tsv'
 text_data = tag + 'title_en.csv'
 image_data = tag + 'covers_0-1.lmdb'
+frame_interval = 1
 frame_no = 5
-video_data = tag + 'frames_interval_1_number_'+str(frame_no)+'.lmdb'
+video_data = tag + 'frames_interval_'+str(frame_interval)+'_number_'+str(frame_no)+'.lmdb'
 max_seq_len_list = [10]
 
 logging_num = 10
@@ -27,7 +28,7 @@ video_model_load = 'slowfast-50' # video-mae
 # last 2 layer of trms
 text_freeze_paras_before = 165
 image_freeze_paras_before = 164
-video_freeze_paras_before = 152
+video_freeze_paras_before = 270
 
 mode = 'train' # train test
 item_tower = 'video' # modal, text, image, video, id
@@ -51,7 +52,7 @@ index_list = [0]
 scheduler = 'step_schedule_with_warmup'
 scheduler_gap = 1
 scheduler_alpha = 1
-version = 'v1'
+version = 'v2'
 num_workers = 16
 
 for batch_size in batch_size_list:
@@ -74,7 +75,7 @@ for batch_size in batch_size_list:
                         --mode {} --item_tower {} --load_ckpt_name {} --label_screen {} --logging_num {} --save_step {}\
                         --testing_num {} --weight_decay {} --drop_rate {} --batch_size {} --lr {} --embedding_dim {}\
                         --image_resize {} --image_model_load {} --text_model_load {} --video_model_load {} --epoch {} \
-                        --text_freeze_paras_before {} --image_freeze_paras_before {} --video_freeze_paras_before {} --max_seq_len {} --frame_no {}\
+                        --text_freeze_paras_before {} --image_freeze_paras_before {} --video_freeze_paras_before {} --max_seq_len {} --frame_interval {} --frame_no {}\
                         --text_fine_tune_lr {} --image_fine_tune_lr {} --video_fine_tune_lr {}\
                         --scheduler {} --scheduler_gap {} --scheduler_alpha {} --max_video_no {}\
                         --version {} \
@@ -83,7 +84,7 @@ for batch_size in batch_size_list:
                         mode, item_tower, load_ckpt_name, label_screen, logging_num, save_step,
                         testing_num,weight_decay, drop_rate, batch_size, lr, embedding_dim,
                         image_resize, image_model_load, text_model_load, video_model_load, epoch,
-                        text_freeze_paras_before, image_freeze_paras_before, video_freeze_paras_before, max_seq_len, frame_no,
+                        text_freeze_paras_before, image_freeze_paras_before, video_freeze_paras_before, max_seq_len, frame_interval, frame_no,
                         text_fine_tune_lr, image_fine_tune_lr, video_fine_tune_lr, 
                         scheduler, scheduler_gap, scheduler_alpha, max_video_no,
                         version, num_workers)
