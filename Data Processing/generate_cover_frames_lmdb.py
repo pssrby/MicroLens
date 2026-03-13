@@ -25,10 +25,10 @@ transform = transforms.Compose([
 
 # save all images as a lmdb database, which would be extracted in the training phase.
 def generate_image_lmdb():
-	image_folder = 'cover_folder/' # to input
+	image_folder = os.path.expanduser('~/dataset/MicroLens-100k-Dataset/MicroLens-100k_covers/') # to input
 	all_image = os.listdir(image_folder)
 	image_num = len(all_image)
-	lmdb_path = 'xxx.lmdb' # to input
+	lmdb_path = os.path.expanduser('~/dataset/MicroLens-100k-Dataset/MicroLens-100k_covers_default.lmdb') # to input
 	isdir = os.path.isdir(lmdb_path)
 	lmdb_env = lmdb.open(lmdb_path, subdir=isdir, map_size=image_num * np.zeros((3, 224, 224)).nbytes*10,
 		readonly=False, meminit=False, map_async=True)
@@ -45,8 +45,8 @@ def generate_image_lmdb():
 	txn.commit()
 	keys = [u'{}'.format(k).encode('ascii') for k in range(image_num)]
 	with lmdb_env.begin(write=True) as txn:
-	    txn.put(b'__keys__', pickle.dumps(keys))
-	    txn.put(b'__len__', pickle.dumps(len(keys)))
+		txn.put(b'__keys__', pickle.dumps(keys))
+		txn.put(b'__len__', pickle.dumps(len(keys)))
 	print(len(keys))
 	print("Flushing database ...")
 	lmdb_env.sync()
@@ -97,7 +97,7 @@ def generate_video_lmdb(pretrain_path, video_path, frame_no):
 
 generate_image_lmdb()
 
-pretrain_path = './videomae_base' # to input
-video_path = './xxx_videos'
-for frame_no in [1, 2, 3, 4, 5]:
-	generate_video_lmdb(pretrain_path, video_path, frame_no)
+# pretrain_path = './videomae_base' # to input
+# video_path = './xxx_videos'
+# for frame_no in [1, 2, 3, 4, 5]:
+# 	generate_video_lmdb(pretrain_path, video_path, frame_no)

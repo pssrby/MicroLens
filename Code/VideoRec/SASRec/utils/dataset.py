@@ -98,7 +98,7 @@ class ModalDataset(Dataset):
                 sample_items_image[mask_len_head + i] = image_trans
             # target
             IMAGE = pickle.loads(txn.get(self.item_id_to_keys[seq[-1]].encode()))
-            image_trans = self.transform(Image.fromarray(IMAGE.get_image()).convert('RGB'))
+            image_trans = np.copy(np.frombuffer(IMAGE.image, dtype=np.float32)).reshape(3, 224, 224) 
             sample_items_image[mask_len_head + tokens_Len] = image_trans
         sample_items_image = torch.FloatTensor(sample_items_image)
 
@@ -117,6 +117,7 @@ class ModalDataset(Dataset):
             VIDEO = np.copy(np.frombuffer(VIDEO.video, dtype=np.float32)).reshape(self.args.frame_no, 3, 224, 224) 
             sample_items_video[mask_len_head + tokens_Len] = VIDEO
         sample_items_video = torch.FloatTensor(sample_items_video)
+        sample_items_id = torch.LongTensor(sample_items_id)
         return sample_items_id, sample_items_text, sample_items_image, sample_items_video, \
             torch.FloatTensor(log_mask)
 

@@ -107,7 +107,7 @@ class Model(torch.nn.Module):
             input_all_text = self.text_encoder(sample_items_text.long())
             input_all_image = self.image_encoder(sample_items_image)
             input_all_video = self.video_encoder(sample_items_video)
-            input_embs = self.fusion_module(input_all_text, input_all_image, input_all_video)
+            score_embs = self.fusion_module(input_all_text, input_all_image, input_all_video)
         elif 'text' == args.item_tower:
             score_embs = self.text_encoder(sample_items_text.long())
         elif 'image' == args.item_tower:
