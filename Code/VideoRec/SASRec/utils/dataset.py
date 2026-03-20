@@ -71,7 +71,7 @@ class ModalDataset(Dataset):
 
         sample_items_text = np.zeros((self.max_seq_len, self.text_size * 2))
         sample_items_image = np.zeros((self.max_seq_len, 3, self.resize, self.resize))
-        sample_items_video = np.zeros((self.max_seq_len, self.args.frame_no, 3, 224, 224)) 
+        sample_items_video = np.zeros((self.max_seq_len, self.args.frame_no, 3, 224, 224))
         sample_items_id = [0] * mask_len_head + seq
 
         ##################################### Text #####################################
@@ -103,19 +103,21 @@ class ModalDataset(Dataset):
         sample_items_image = torch.FloatTensor(sample_items_image)
 
         ##################################### video #####################################
-        env = lmdb.open(self.video_db_path, subdir=os.path.isdir(self.video_db_path),
-                        readonly=True, lock=False, readahead=False, meminit=False)
-        with env.begin() as txn:
-            for i in range(tokens_Len):
-                # pos
-                VIDEO = pickle.loads(txn.get(self.item_id_to_keys[seq[i]].encode()))
-                VIDEO = np.copy(np.frombuffer(VIDEO.video, dtype=np.float32)).reshape(self.args.frame_no, 3, 224, 224) 
-                sample_items_video[mask_len_head + i] = VIDEO
+        # In text_image mode, we intentionally skip video LMDB reading.
+        if self.args.item_tower != 'text_image':
+            env = lmdb.open(self.video_db_path, subdir=os.path.isdir(self.video_db_path),
+                            readonly=True, lock=False, readahead=False, meminit=False)
+            with env.begin() as txn:
+                for i in range(tokens_Len):
+                    # pos
+                    VIDEO = pickle.loads(txn.get(self.item_id_to_keys[seq[i]].encode()))
+                    VIDEO = np.copy(np.frombuffer(VIDEO.video, dtype=np.float32)).reshape(self.args.frame_no, 3, 224, 224)
+                    sample_items_video[mask_len_head + i] = VIDEO
 
-            # target
-            VIDEO = pickle.loads(txn.get(self.item_id_to_keys[seq[-1]].encode()))
-            VIDEO = np.copy(np.frombuffer(VIDEO.video, dtype=np.float32)).reshape(self.args.frame_no, 3, 224, 224) 
-            sample_items_video[mask_len_head + tokens_Len] = VIDEO
+                # target
+                VIDEO = pickle.loads(txn.get(self.item_id_to_keys[seq[-1]].encode()))
+                VIDEO = np.copy(np.frombuffer(VIDEO.video, dtype=np.float32)).reshape(self.args.frame_no, 3, 224, 224)
+                sample_items_video[mask_len_head + tokens_Len] = VIDEO
         sample_items_video = torch.FloatTensor(sample_items_video)
         sample_items_id = torch.LongTensor(sample_items_id)
         return sample_items_id, sample_items_text, sample_items_image, sample_items_video, \

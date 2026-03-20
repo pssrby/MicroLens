@@ -1,17 +1,18 @@
 import os
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-root_data_dir = '/data2/guangyi/dataset/'
-root_model_dir = '/data2/guangyi/model/'
+root_data_dir = '~/dataset/'
+root_model_dir = '~/model/'
 
 dataset = 'MicroLens-100k-Dataset'
 tag = 'MicroLens-100k_'
 behaviors = tag + 'pairs.tsv'
 text_data = tag + 'title_en.csv'
-image_data = tag + 'covers_0-1.lmdb'
+image_data = tag + 'covers_default.lmdb'
 frame_interval = 1
 frame_no = 5
 video_data = tag + 'frames_interval_'+str(frame_interval)+'_number_'+str(frame_no)+'.lmdb'
+video_data = None
 max_seq_len_list = [10]
 
 logging_num = 10
@@ -22,7 +23,7 @@ image_resize = 224
 max_video_no = 34321 # 34321 for 10wu
 
 text_model_load = 'bert-base-uncased' # 'bert-base-cn' 
-image_model_load = 'vit-base-mae' # 'vit-b-32-clip'
+image_model_load = 'resnet50' # 'vit-b-32-clip'
 video_model_load = 'slowfast-50' # video-mae
 
 # last 2 layer of trms
@@ -30,10 +31,10 @@ text_freeze_paras_before = 165
 image_freeze_paras_before = 164
 video_freeze_paras_before = 270
 
-mode = 'train' # train test
-item_tower = 'video' # modal, text, image, video, id
+mode = 'test' # train test
+item_tower = 'text_image' # modal, text, image, video, id, text_image
 
-epoch = 30
+epoch = 50
 load_ckpt_name = 'None'
 # load_ckpt_name = 'epoch-200.pt'
 # load_ckpt_name = 'epoch-44.pt'
@@ -52,7 +53,7 @@ index_list = [0]
 scheduler = 'step_schedule_with_warmup'
 scheduler_gap = 1
 scheduler_alpha = 1
-version = 'v2'
+version = 'v1'
 num_workers = 16
 
 for batch_size in batch_size_list:

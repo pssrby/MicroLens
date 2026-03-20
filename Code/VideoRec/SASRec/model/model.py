@@ -30,7 +30,7 @@ class Model(torch.nn.Module):
         elif args.model == 'nextitnet':
             self.user_encoder = User_Encoder_NextItNet(args)
 
-        if 'image' == args.item_tower or 'modal' == args.item_tower:
+        if args.item_tower in ('image', 'modal', 'text_image'):
             if 'resnet' in args.image_model_load:
                 self.image_encoder = ResnetEncoder(image_net=image_net, args=args)
             elif 'vit-b-32-clip' in args.image_model_load:
@@ -40,11 +40,11 @@ class Model(torch.nn.Module):
             elif 'swin_tiny' in args.image_model_load or 'swin_base' in args.image_model_load:
                 self.image_encoder = SwinEncoder(image_net=image_net, args=args)
 
-        if 'text' == args.item_tower or 'modal' == args.item_tower:
+        if args.item_tower in ('text', 'modal', 'text_image'):
             self.text_content = torch.LongTensor(text_content)
             self.text_encoder = TextEmbedding(args=args, bert_model=bert_model)
         
-        if 'video' == args.item_tower or 'modal' == args.item_tower:
+        if args.item_tower in ('video', 'modal'):
             if 'mae' in args.video_model_load:
                 self.video_encoder = VideoMaeEncoder(video_net=video_net, args=args)
             elif 'r3d18' in args.video_model_load:
@@ -88,7 +88,7 @@ class Model(torch.nn.Module):
         self.criterion = nn.CrossEntropyLoss()
 
         fusion = args.fusion_method.lower()
-        if fusion == 'concat' and args.item_tower == 'modal':
+        if fusion == 'concat' and args.item_tower in ('modal', 'text_image'):
             self.fusion_module = ConcatFusion(args=args)
 
     def alignment(self, x, y):
@@ -108,6 +108,10 @@ class Model(torch.nn.Module):
             input_all_image = self.image_encoder(sample_items_image)
             input_all_video = self.video_encoder(sample_items_video)
             score_embs = self.fusion_module(input_all_text, input_all_image, input_all_video)
+        elif 'text_image' == args.item_tower:
+            input_all_text = self.text_encoder(sample_items_text.long())
+            input_all_image = self.image_encoder(sample_items_image)
+            score_embs = self.fusion_module(input_all_text, input_all_image)
         elif 'text' == args.item_tower:
             score_embs = self.text_encoder(sample_items_text.long())
         elif 'image' == args.item_tower:

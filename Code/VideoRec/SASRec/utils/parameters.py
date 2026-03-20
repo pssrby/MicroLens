@@ -9,7 +9,7 @@ def parse_args():
 
     # ============== data_dir ==============
     parser.add_argument('--mode', type=str, default='train', choices=['train', 'test'])
-    parser.add_argument('--item_tower', type=str, default='modal', choices=['video', 'modal', 'text', 'image', 'id'])
+    parser.add_argument('--item_tower', type=str, default='modal', choices=['video', 'modal', 'text', 'image', 'text_image', 'id'])
     parser.add_argument('--root_data_dir', type=str, default=root_data_dir)
     parser.add_argument('--root_model_dir', type=str, default=root_data_dir)
     parser.add_argument('--dataset', type=str, default=None)

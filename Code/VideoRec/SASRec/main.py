@@ -53,8 +53,13 @@ def setup_seed(seed):
     torch.backends.cudnn.deterministic = False
 
 def train(args, model_dir, Log_file, Log_screen, start_time, local_rank):
+    text_model = None
+    image_model = None
+    video_model = None
+    tokenizer = None
+
     # ========================================== Text and Image Encoders ===========================================
-    if 'modal' == args.item_tower or 'text' == args.item_tower:
+    if args.item_tower in ('modal', 'text', 'text_image'):
         if 'roberta-base-en' in args.text_model_load:
             Log_file.info('load roberta model...')
             text_model_load = os.path.abspath(os.path.join(args.root_model_dir, 'pretrained_models/bert', args.text_model_load))
@@ -107,7 +112,7 @@ def train(args, model_dir, Log_file, Log_screen, start_time, local_rank):
             image_model = None
             video_model = None
 
-    if 'modal' == args.item_tower or 'image' == args.item_tower:
+    if args.item_tower in ('modal', 'image', 'text_image'):
         if 'vit-b-32-clip' in args.image_model_load:
             Log_file.info('load Vit model...')
             image_model_load = os.path.abspath(os.path.join(args.root_model_dir, 'pretrained_models', args.image_model_load))
@@ -154,7 +159,7 @@ def train(args, model_dir, Log_file, Log_screen, start_time, local_rank):
             text_model = None
             video_model = None
     
-    if 'modal' == args.item_tower or 'video' == args.item_tower:
+    if args.item_tower in ('modal', 'video'):
         if 'video-mae' in args.video_model_load:
             Log_file.info('load video mae model...')
             configuration = VideoMAEConfig(num_frames=args.frame_no)
@@ -238,7 +243,7 @@ def train(args, model_dir, Log_file, Log_screen, start_time, local_rank):
     item_content = None
     item_id_to_keys = None
 
-    if 'modal' == args.item_tower or 'text' == args.item_tower:
+    if args.item_tower in ('modal', 'text', 'text_image'):
         Log_file.info('read texts ...')
         item_dic_titles_after_tokenizer, before_item_name_to_index, before_item_index_to_name = read_texts(tokenizer, args)
 
@@ -251,7 +256,7 @@ def train(args, model_dir, Log_file, Log_screen, start_time, local_rank):
 
         item_content = np.concatenate([text_title, text_title_attmask], axis=1)
 
-    if 'modal' == args.item_tower or 'image' == args.item_tower or 'video' == args.item_tower or 'id' == args.item_tower:
+    if args.item_tower in ('modal', 'image', 'video', 'id', 'text_image'):
         Log_file.info('read images/videos/id...')
         before_item_id_to_keys, before_item_name_to_id = read_items(args)
 
@@ -294,8 +299,8 @@ def train(args, model_dir, Log_file, Log_screen, start_time, local_rank):
     Log_file.info(model)
     # ============================ Dataset and Dataloader ============================
 
-    if 'modal' == args.item_tower:
-        Log_file.info('build  text and image dataset...')
+    if args.item_tower in ('modal', 'text_image'):
+        Log_file.info('build modal dataset...')
         train_dataset = ModalDataset(u2seq=users_train,
                                     item_content=item_content,
                                     max_seq_len=args.max_seq_len,
@@ -485,7 +490,7 @@ def train(args, model_dir, Log_file, Log_screen, start_time, local_rank):
             Log_file.info('start of trainin epoch:  {} ,lr: {}'.format(now_epoch, lr_scheduler.get_lr()))
 
         for data in train_dl:
-            if 'modal' == args.item_tower:
+            if args.item_tower in ('modal', 'text_image'):
                 sample_items_id, sample_items_text, sample_items_image, sample_items_video, log_mask = data
                 sample_items_id, sample_items_text, sample_items_image, sample_items_video, log_mask = \
                     sample_items_id.to(local_rank), sample_items_text.to(local_rank), \
@@ -617,6 +622,13 @@ def eval(now_epoch, max_epoch, early_stop_epoch, max_eval_value, early_stop_coun
 
         item_scoring = get_fusion_score(model ,item_scoring_text, item_scoring_image, item_scoring_video, local_rank, args)
 
+    elif 'text_image' == args.item_tower:
+        Log_file.info('get_text_scoring...')
+        item_scoring_text = get_item_text_score(model, item_content, batch_size, args, local_rank)
+        Log_file.info('get_image_scoring...')
+        item_scoring_image = get_item_image_score(model, item_num, item_id_to_keys, batch_size, args, local_rank)
+        item_scoring = get_fusion_score(model, item_scoring_text, item_scoring_image, None, local_rank, args)
+
     elif 'id' == args.item_tower:
         item_scoring = get_item_id_score(model, item_num, batch_size, args, local_rank)
 
@@ -651,7 +663,7 @@ def main():
     # ============== Experiment and Logging Config ===============
     setup_seed(42 + dist.get_rank())  # magic number
 
-    assert args.item_tower in ['modal', 'text', 'image', 'id', 'video']
+    assert args.item_tower in ['modal', 'text', 'image', 'id', 'video', 'text_image']
     dir_label =  str(args.behaviors).strip().split('.')[0] + '_'  + str(args.item_tower)
     
     tag = args.version
@@ -688,6 +700,14 @@ def main():
         log_paras = f'{tag}_{args.model}_blocknum_{args.block_num}_tau_{args.tau}_bs_{args.batch_size}' \
                     f'_ed_{args.embedding_dim}_lr_{args.lr}' \
                     f'_l2_{args.weight_decay}' \
+                    f'_maxLen_{args.max_seq_len}'
+
+    elif 'text_image' == args.item_tower:
+        log_paras = f'{tag}_{args.model}_blocknum_{args.block_num}_tau_{args.tau}_bs_{args.batch_size}' \
+                    f'_ed_{args.embedding_dim}_lr_{args.lr}' \
+                    f'_l2_{args.weight_decay}_flrText_{args.text_fine_tune_lr}_flrImg_{args.image_fine_tune_lr}'\
+                    f'_{args.text_model_load}_{args.image_model_load}' \
+                    f'_freeze_{args.text_freeze_paras_before}_{args.image_freeze_paras_before}'\
                     f'_maxLen_{args.max_seq_len}'
 
 

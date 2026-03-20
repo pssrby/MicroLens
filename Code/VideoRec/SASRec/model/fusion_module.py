@@ -14,12 +14,17 @@ class SumFusion(nn.Module):
 class ConcatFusion(nn.Module):
     def __init__(self, args):
         super(ConcatFusion, self).__init__()
-        self.fc_1 = nn.Linear(args.embedding_dim * 3, args.embedding_dim)
+        self.fc_1_3 = nn.Linear(args.embedding_dim * 3, args.embedding_dim)
+        self.fc_1_2 = nn.Linear(args.embedding_dim * 2, args.embedding_dim)
         self.fc_2 = nn.Linear(args.embedding_dim, args.embedding_dim)
 
-    def forward(self, x, y, z):
-        output = torch.cat((x, y, z), dim=1)
-        output = self.fc_2(self.fc_1(output))
+    def forward(self, x, y, z=None):
+        if z is None:
+            output = torch.cat((x, y), dim=1)
+            output = self.fc_2(self.fc_1_2(output))
+        else:
+            output = torch.cat((x, y, z), dim=1)
+            output = self.fc_2(self.fc_1_3(output))
         return output
 
 class FiLM(nn.Module):

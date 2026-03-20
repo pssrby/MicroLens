@@ -106,11 +106,15 @@ def get_item_video_score(model, item_num, item_id_to_keys, test_batch_size, args
 def get_fusion_score(model, item_scoring_text, item_scoring_image, item_scoring_video, local_rank, args):
     model.eval()
     with torch.no_grad():
-        if 'modal' in args.item_tower:
+        if args.item_tower == 'modal':
             item_scoring_text = item_scoring_text.to(local_rank)
             item_scoring_image = item_scoring_image.to(local_rank)
             item_scoring_video = item_scoring_video.to(local_rank)
             item_scoring = model.module.fusion_module(item_scoring_text, item_scoring_image, item_scoring_video)
+        elif args.item_tower == 'text_image':
+            item_scoring_text = item_scoring_text.to(local_rank)
+            item_scoring_image = item_scoring_image.to(local_rank)
+            item_scoring = model.module.fusion_module(item_scoring_text, item_scoring_image)
 
     return item_scoring.to(torch.device('cpu')).detach()
 
