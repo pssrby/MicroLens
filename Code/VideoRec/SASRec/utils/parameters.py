@@ -79,7 +79,7 @@ def parse_args():
     parser.add_argument('--node_rank', default=0, type=int)
 
     # ============== fusion methods ==============
-    parser.add_argument('--fusion_method', type=str, default='concat', choices=['none', 'sum', 'concat', 'film', 'gated'])
+    parser.add_argument('--fusion_method', type=str, default='concat', choices=['none', 'sum', 'concat', 'film', 'gated', 'moe'])
 
     args = parser.parse_args()
 

@@ -12,7 +12,6 @@ image_data = tag + 'covers_default.lmdb'
 frame_interval = 1
 frame_no = 5
 video_data = tag + 'frames_interval_'+str(frame_interval)+'_number_'+str(frame_no)+'.lmdb'
-video_data = None
 max_seq_len_list = [10]
 
 logging_num = 10
@@ -55,6 +54,7 @@ scheduler_gap = 1
 scheduler_alpha = 1
 version = 'v1'
 num_workers = 16
+fusion_method = 'moe' # none, sum, concat, film, gated, moe
 
 for batch_size in batch_size_list:
     for embedding_dim in embedding_dim_list:
@@ -80,7 +80,7 @@ for batch_size in batch_size_list:
                         --text_fine_tune_lr {} --image_fine_tune_lr {} --video_fine_tune_lr {}\
                         --scheduler {} --scheduler_gap {} --scheduler_alpha {} --max_video_no {}\
                         --version {} \
-                        --num_workers {}".format(
+                        --num_workers {} --fusion_method {}".format(
                         root_data_dir, root_model_dir, dataset, behaviors, text_data, image_data, video_data,
                         mode, item_tower, load_ckpt_name, label_screen, logging_num, save_step,
                         testing_num,weight_decay, drop_rate, batch_size, lr, embedding_dim,
@@ -88,6 +88,6 @@ for batch_size in batch_size_list:
                         text_freeze_paras_before, image_freeze_paras_before, video_freeze_paras_before, max_seq_len, frame_interval, frame_no,
                         text_fine_tune_lr, image_fine_tune_lr, video_fine_tune_lr, 
                         scheduler, scheduler_gap, scheduler_alpha, max_video_no,
-                        version, num_workers)
+                        version, num_workers, fusion_method)
             
                 os.system(run_py)

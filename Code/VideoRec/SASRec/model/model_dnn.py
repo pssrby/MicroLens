@@ -12,7 +12,7 @@ from .video_encoders import EX3DXSEncoder, X3DXSEncoder, X3DSEncoder, X3DMEncode
 from .video_encoders import X3DLEncoder, MVIT16Encoder, MVIT16X4Encoder, MVIT32X3Encoder
 from .video_encoders import SLOWFAST50Encoder, SLOWFAST16X8101Encoder
 from .image_encoders import VitEncoder, ResnetEncoder, MaeEncoder, SwinEncoder 
-from .fusion_module import SumFusion, ConcatFusion, FiLM, GatedFusion 
+from .fusion_module import MoEFusion, SumFusion, ConcatFusion, FiLM, GatedFusion 
 from .user_encoders import UserEncoder
 
 class MLP_Layers(torch.nn.Module):

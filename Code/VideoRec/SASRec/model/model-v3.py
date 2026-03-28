@@ -8,7 +8,7 @@ import torch.nn.functional as F
 from .text_encoders import TextEmbedding
 from .video_encoders import VideoMaeEncoder, R3D18Encoder
 from .image_encoders import VitEncoder, ResnetEncoder, MaeEncoder, SwinEncoder 
-from .fusion_module import SumFusion, ConcatFusion, FiLM, GatedFusion 
+from .fusion_module import MoEFusion, SumFusion, ConcatFusion, FiLM, GatedFusion 
 from .user_encoders import UserEncoder
 
 class Model(torch.nn.Module):

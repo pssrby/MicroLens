@@ -1,6 +1,69 @@
 import torch
 import torch.nn as nn
 
+class MoEFusion(nn.Module):
+    """Mixture-of-Experts fusion for two or three modalities.
+
+    Dense gate: softmax over experts and weighted sum of expert outputs.
+    Experts are simple 2-layer MLPs on concatenated modality embeddings.
+    """
+
+    def __init__(self, args, num_experts=4, num_modalities=2, hidden_dim=None, dropout=0.0):
+        super().__init__()
+        if num_modalities not in (2, 3):
+            raise ValueError("MoEFusion only supports num_modalities=2 or 3")
+
+        self.emb_dim = args.embedding_dim
+        self.num_experts = int(num_experts)
+        self.num_modalities = num_modalities
+
+        if hidden_dim is None:
+            hidden_dim = self.emb_dim * 2
+
+        self.in_dim = self.emb_dim * self.num_modalities
+        self.gate = nn.Linear(self.in_dim, self.num_experts)
+
+        experts = []
+        for _ in range(self.num_experts):
+            experts.append(
+                nn.Sequential(
+                    nn.Linear(self.in_dim, hidden_dim),
+                    nn.GELU(),
+                    nn.Dropout(dropout),
+                    nn.Linear(hidden_dim, self.emb_dim),
+                )
+            )
+        self.experts = nn.ModuleList(experts)
+
+    def forward(self, x, y, z=None, return_gate: bool = False):
+        if z is None and self.num_modalities == 3:
+            raise ValueError("MoEFusion(num_modalities=3) requires x, y, z inputs")
+        if z is not None and self.num_modalities == 2:
+            raise ValueError("MoEFusion(num_modalities=2) expects only x and y")
+
+        if z is None:
+            inp = torch.cat((x, y), dim=1)
+        else:
+            inp = torch.cat((x, y, z), dim=1)
+
+        gate_logits = self.gate(inp)
+        gate_prob = torch.softmax(gate_logits, dim=-1)
+
+        expert_outs = [expert(inp) for expert in self.experts]
+        stacked = torch.stack(expert_outs, dim=1)
+        fused = (gate_prob.unsqueeze(-1) * stacked).sum(dim=1)
+
+        if not return_gate:
+            return fused
+
+        stats = {
+            "gate_prob": gate_prob,
+            "gate_entropy": (-gate_prob.clamp_min(1e-9).log() * gate_prob).sum(dim=-1).mean(),
+            "gate_max": gate_prob.max(dim=-1).values.mean(),
+        }
+        return fused, stats
+
+
 class SumFusion(nn.Module):
     def __init__(self, args):
         super(SumFusion, self).__init__()
