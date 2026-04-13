@@ -4,10 +4,15 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 root_data_dir = '~/dataset/'
 root_model_dir = '~/model/'
 
+# dataset = 'bili_food'
 dataset = 'MicroLens-100k-Dataset'
+# tag = 'bilibili_food_'
 tag = 'MicroLens-100k_'
+# behaviors = tag + 'trans_users.tsv'
 behaviors = tag + 'pairs.tsv'
+# text_data = tag + 'trans_items_texts.tsv'
 text_data = tag + 'title_en.csv'
+# image_data = tag + 'trans_items_images.lmdb'
 image_data = tag + 'covers_default.lmdb'
 frame_interval = 1
 frame_no = 5
@@ -22,25 +27,26 @@ image_resize = 224
 max_video_no = 34321 # 34321 for 10wu
 
 text_model_load = 'bert-base-uncased' # 'bert-base-cn' 
-image_model_load = 'resnet50' # 'vit-b-32-clip'
+# text_model_load = 'xlm-roberta-base'
+image_model_load = 'clip-vit-base-patch32' # 'vit-b-32-clip' 'resnet50'
 video_model_load = 'slowfast-50' # video-mae
 
 # last 2 layer of trms
-text_freeze_paras_before = 165
-image_freeze_paras_before = 164
-video_freeze_paras_before = 270
+text_freeze_paras_before = 165 #165
+image_freeze_paras_before = 9999 #164
+video_freeze_paras_before = 9999 #270
 
-mode = 'test' # train test
-item_tower = 'text_image' # modal, text, image, video, id, text_image
+mode = 'train' # train test
+item_tower = 'text' # modal, text, image, video, id, text_image, text_video
 
-epoch = 50
+epoch = 100
 load_ckpt_name = 'None'
 # load_ckpt_name = 'epoch-200.pt'
-# load_ckpt_name = 'epoch-44.pt'
+load_ckpt_name = 'epoch-50.pt'
 
 weight_decay = 0.1
 drop_rate = 0.1
-batch_size_list = [20]
+batch_size_list = [512]
 
 embedding_dim_list = [256]
 lr_list = [1e-4]
@@ -52,9 +58,12 @@ index_list = [0]
 scheduler = 'step_schedule_with_warmup'
 scheduler_gap = 1
 scheduler_alpha = 1
-version = 'v1'
+version = 'v2'
 num_workers = 16
-fusion_method = 'moe' # none, sum, concat, film, gated, moe
+fusion_method = 'film' # none, sum, concat, film, gated, moe
+text_ckpt_path = None #'./pretrain/epoch-44.pt'
+image_ckpt_path = None
+video_ckpt_path = './pretrain/epoch-45.pt'
 
 for batch_size in batch_size_list:
     for embedding_dim in embedding_dim_list:
@@ -69,9 +78,9 @@ for batch_size in batch_size_list:
                         item_tower, batch_size, embedding_dim, lr,
                         drop_rate, weight_decay, max_seq_len)
 
-                run_py = "CUDA_VISIBLE_DEVICES='0,1, 2, 3' \
+                run_py = "CUDA_VISIBLE_DEVICES='2,3' \
                         torchrun \
-                        --nproc_per_node 4 --master_port 29500 main.py \
+                        --nproc_per_node 2 --master_port 29500 main.py \
                         --root_data_dir {} --root_model_dir {} --dataset {} --behaviors {} --text_data {}  --image_data {} --video_data {}\
                         --mode {} --item_tower {} --load_ckpt_name {} --label_screen {} --logging_num {} --save_step {}\
                         --testing_num {} --weight_decay {} --drop_rate {} --batch_size {} --lr {} --embedding_dim {}\
@@ -80,7 +89,8 @@ for batch_size in batch_size_list:
                         --text_fine_tune_lr {} --image_fine_tune_lr {} --video_fine_tune_lr {}\
                         --scheduler {} --scheduler_gap {} --scheduler_alpha {} --max_video_no {}\
                         --version {} \
-                        --num_workers {} --fusion_method {}".format(
+                        --num_workers {} --fusion_method {} \
+                        --text_ckpt_path {} --image_ckpt_path {} --video_ckpt_path {}".format(
                         root_data_dir, root_model_dir, dataset, behaviors, text_data, image_data, video_data,
                         mode, item_tower, load_ckpt_name, label_screen, logging_num, save_step,
                         testing_num,weight_decay, drop_rate, batch_size, lr, embedding_dim,
@@ -88,6 +98,7 @@ for batch_size in batch_size_list:
                         text_freeze_paras_before, image_freeze_paras_before, video_freeze_paras_before, max_seq_len, frame_interval, frame_no,
                         text_fine_tune_lr, image_fine_tune_lr, video_fine_tune_lr, 
                         scheduler, scheduler_gap, scheduler_alpha, max_video_no,
-                        version, num_workers, fusion_method)
+                        version, num_workers, fusion_method, 
+                        text_ckpt_path, image_ckpt_path, video_ckpt_path)
             
                 os.system(run_py)

@@ -88,22 +88,22 @@ class ModalDataset(Dataset):
         sample_items_text = torch.LongTensor(sample_items_text)
 
         ##################################### Image #####################################
-        env = lmdb.open(self.image_db_path, subdir=os.path.isdir(self.image_db_path),
-                        readonly=True, lock=False, readahead=False, meminit=False)
-        with env.begin() as txn:
-            for i in range(tokens_Len):
-                # pos
-                IMAGE = pickle.loads(txn.get(self.item_id_to_keys[seq[i]].encode()))
+        if self.args.item_tower != 'text_video':
+            env = lmdb.open(self.image_db_path, subdir=os.path.isdir(self.image_db_path),
+                            readonly=True, lock=False, readahead=False, meminit=False)
+            with env.begin() as txn:
+                for i in range(tokens_Len):
+                    # pos
+                    IMAGE = pickle.loads(txn.get(self.item_id_to_keys[seq[i]].encode()))
+                    image_trans = np.copy(np.frombuffer(IMAGE.image, dtype=np.float32)).reshape(3, 224, 224) 
+                    sample_items_image[mask_len_head + i] = image_trans
+                # target
+                IMAGE = pickle.loads(txn.get(self.item_id_to_keys[seq[-1]].encode()))
                 image_trans = np.copy(np.frombuffer(IMAGE.image, dtype=np.float32)).reshape(3, 224, 224) 
-                sample_items_image[mask_len_head + i] = image_trans
-            # target
-            IMAGE = pickle.loads(txn.get(self.item_id_to_keys[seq[-1]].encode()))
-            image_trans = np.copy(np.frombuffer(IMAGE.image, dtype=np.float32)).reshape(3, 224, 224) 
-            sample_items_image[mask_len_head + tokens_Len] = image_trans
+                sample_items_image[mask_len_head + tokens_Len] = image_trans
         sample_items_image = torch.FloatTensor(sample_items_image)
 
         ##################################### video #####################################
-        # In text_image mode, we intentionally skip video LMDB reading.
         if self.args.item_tower != 'text_image':
             env = lmdb.open(self.video_db_path, subdir=os.path.isdir(self.video_db_path),
                             readonly=True, lock=False, readahead=False, meminit=False)

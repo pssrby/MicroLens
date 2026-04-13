@@ -39,12 +39,14 @@ class Model(torch.nn.Module):
                 self.image_encoder = MaeEncoder(image_net=image_net, args=args)
             elif 'swin_tiny' in args.image_model_load or 'swin_base' in args.image_model_load:
                 self.image_encoder = SwinEncoder(image_net=image_net, args=args)
+            elif 'clip-vit-base-patch32' in args.image_model_load:
+                self.image_encoder = VitEncoder(image_net=image_net, args=args)
 
-        if args.item_tower in ('text', 'modal', 'text_image'):
+        if args.item_tower in ('text', 'modal', 'text_image', 'text_video'):
             self.text_content = torch.LongTensor(text_content)
             self.text_encoder = TextEmbedding(args=args, bert_model=bert_model)
         
-        if args.item_tower in ('video', 'modal'):
+        if args.item_tower in ('video', 'modal', 'text_video'):
             if 'mae' in args.video_model_load:
                 self.video_encoder = VideoMaeEncoder(video_net=video_net, args=args)
             elif 'r3d18' in args.video_model_load:
@@ -88,20 +90,20 @@ class Model(torch.nn.Module):
         self.criterion = nn.CrossEntropyLoss()
 
         fusion = args.fusion_method.lower()
-        if fusion == 'concat' and args.item_tower in ('modal', 'text_image'):
+        if fusion == 'concat' and args.item_tower in ('modal', 'text_image', 'text_video', 'text'):
             self.fusion_module = ConcatFusion(args=args)
-        elif fusion == 'moe' and args.item_tower in ('modal', 'text_image'):
+        elif fusion == 'moe' and args.item_tower in ('modal', 'text_image', 'text_video', 'text'):
             num_modalities = 3 if args.item_tower == 'modal' else 2
             self.fusion_module = MoEFusion(args=args, num_modalities=num_modalities)
-        elif fusion == 'sum' and args.item_tower in ('text_image', 'modal'):
+        elif fusion == 'sum' and args.item_tower in ('modal', 'text_image', 'text_video', 'text'):
             self.fusion_module = SumFusion(args=args)
-        elif fusion == 'film' and args.item_tower in ('text_image', 'modal'):
+        elif fusion == 'film' and args.item_tower in ('modal', 'text_image', 'text_video', 'text'):
             self.fusion_module = FiLM(args=args)
-        elif fusion == 'gated' and args.item_tower in ('text_image', 'modal'):
+        elif fusion == 'gated' and args.item_tower in ('modal', 'text_image', 'text_video', 'text'):
             self.fusion_module = GatedFusion(args=args)
         else:
             # fallback to concat for modal as default, or no fusion for single modality.
-            if args.item_tower in ('modal', 'text_image'):
+            if args.item_tower in ('modal', 'text_image', 'text_video', 'text'):
                 self.fusion_module = ConcatFusion(args=args)
 
     def alignment(self, x, y):
@@ -125,7 +127,20 @@ class Model(torch.nn.Module):
             input_all_text = self.text_encoder(sample_items_text.long())
             input_all_image = self.image_encoder(sample_items_image)
             score_embs = self.fusion_module(input_all_text, input_all_image)
+        elif 'text_video' == args.item_tower:
+            input_all_text = self.text_encoder(sample_items_text.long())
+            input_all_video = self.video_encoder(sample_items_video)
+            score_embs = self.fusion_module(input_all_text, input_all_video)
         elif 'text' == args.item_tower:
+            ## TO MAKE text+id
+            # input_all_text = self.text_encoder(sample_items_text.long())
+            # input_all_id = self.id_encoder(sample_items_id)
+            # input_all_text = F.normalize(input_all_text, dim=-1)
+            # input_all_id = F.normalize(input_all_id, dim=-1)
+            # # print(input_all_text.shape, input_all_id.shape)
+            # # os._exit(0)
+            # score_embs = self.fusion_module(input_all_id, input_all_text)
+            ## TO MAKE text+id
             score_embs = self.text_encoder(sample_items_text.long())
         elif 'image' == args.item_tower:
             score_embs = self.image_encoder(sample_items_image)

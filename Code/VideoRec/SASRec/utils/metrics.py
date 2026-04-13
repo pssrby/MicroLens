@@ -115,6 +115,10 @@ def get_fusion_score(model, item_scoring_text, item_scoring_image, item_scoring_
             item_scoring_text = item_scoring_text.to(local_rank)
             item_scoring_image = item_scoring_image.to(local_rank)
             item_scoring = model.module.fusion_module(item_scoring_text, item_scoring_image)
+        elif args.item_tower == 'text_video':
+            item_scoring_text = item_scoring_text.to(local_rank)
+            item_scoring_video = item_scoring_video.to(local_rank)
+            item_scoring = model.module.fusion_module(item_scoring_text, item_scoring_video)
 
     return item_scoring.to(torch.device('cpu')).detach()
 

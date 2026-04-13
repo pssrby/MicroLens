@@ -9,7 +9,7 @@ def parse_args():
 
     # ============== data_dir ==============
     parser.add_argument('--mode', type=str, default='train', choices=['train', 'test'])
-    parser.add_argument('--item_tower', type=str, default='modal', choices=['video', 'modal', 'text', 'image', 'text_image', 'id'])
+    parser.add_argument('--item_tower', type=str, default='modal', choices=['video', 'modal', 'text', 'image', 'text_image', 'text_video', 'id'])
     parser.add_argument('--root_data_dir', type=str, default=root_data_dir)
     parser.add_argument('--root_model_dir', type=str, default=root_data_dir)
     parser.add_argument('--dataset', type=str, default=None)
@@ -80,6 +80,9 @@ def parse_args():
 
     # ============== fusion methods ==============
     parser.add_argument('--fusion_method', type=str, default='concat', choices=['none', 'sum', 'concat', 'film', 'gated', 'moe'])
+    parser.add_argument("--text_ckpt_path", type=str, default=None)
+    parser.add_argument("--image_ckpt_path", type=str, default=None) 
+    parser.add_argument("--video_ckpt_path", type=str, default=None) 
 
     args = parser.parse_args()
 
