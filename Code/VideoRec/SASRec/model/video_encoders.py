@@ -311,3 +311,16 @@ class SLOWFAST16X8101Encoder(torch.nn.Module):
         slow_item_content = torch.cat((slow_item_content_1, slow_item_content_2), 2)
         item_scoring = self.video_net([slow_item_content, item_content])
         return self.activate(self.video_proj(item_scoring))
+
+class VideoFeatureEncoder(torch.nn.Module):
+    def __init__(self, args):
+        super(VideoFeatureEncoder, self).__init__()
+        self.activate = nn.GELU()
+        self.args = args
+        self.video_proj = nn.Linear(400, args.embedding_dim)
+        xavier_normal_(self.video_proj.weight.data)
+        if self.video_proj.bias is not None:
+            constant_(self.video_proj.bias.data, 0)
+
+    def forward(self, item_content):
+        return self.activate(self.video_proj(item_content))

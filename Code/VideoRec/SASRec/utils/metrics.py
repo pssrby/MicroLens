@@ -69,9 +69,27 @@ def get_item_text_score(model, item_content, test_batch_size, args, local_rank):
     with torch.no_grad():
         for input_ids in item_dataloader:
             input_ids = input_ids.to(local_rank)
-            item_emb = model.module.text_encoder(input_ids)
+            if args.text_feature_path in [None, 'None', 'none', '']:
+                item_emb = model.module.text_encoder(input_ids)
+            else:
+                item_emb = model.module.text_encoder(input_ids.float())
             item_scoring.extend(item_emb)
     return torch.stack(tensors=item_scoring, dim=0).to(torch.device('cpu')).detach()
+
+def get_item_text_score_sequence(model, item_content, test_batch_size, args, local_rank):
+    model.eval()
+    item_dataset = ItemsDataset(item_content)
+    item_dataloader = DataLoader(item_dataset, batch_size=test_batch_size, num_workers=args.num_workers,
+                                 pin_memory=True, collate_fn=item_collate_fn)
+    item_scoring = []
+    with torch.no_grad():
+        for input_ids in item_dataloader:
+            input_ids = input_ids.to(local_rank)
+            if args.text_feature_path not in [None, 'None', 'none', '']:
+                raise ValueError('crossAttentionSeq eval requires online text encoder features, not precomputed text features.')
+            item_emb, _ = model.module.text_encoder.forward_sequence(input_ids)
+            item_scoring.append(item_emb.to(torch.device('cpu')).detach())
+    return torch.cat(item_scoring, dim=0)
 
 def get_item_image_score(model, item_num, item_id_to_keys, test_batch_size, args, local_rank):
     model.eval()
@@ -90,9 +108,15 @@ def get_item_image_score(model, item_num, item_id_to_keys, test_batch_size, args
 
 def get_item_video_score(model, item_num, item_id_to_keys, test_batch_size, args, local_rank):
     model.eval()
+    if args.video_feature_path in [None, 'None', 'none', '']:
+        mode = 'video'
+        db_path = os.path.join(args.root_data_dir, args.dataset, args.video_data)
+    else:
+        mode = 'video_feature'
+        db_path = os.path.expanduser(args.video_feature_path)
     item_dataset = LmdbEvalDataset(data=np.arange(item_num + 1), item_id_to_keys=item_id_to_keys,
-                                   db_path=os.path.join(args.root_data_dir, args.dataset, args.video_data),
-                                   resize=args.image_resize, mode='video', frame_no=args.frame_no)
+                                   db_path=db_path,
+                                   resize=args.image_resize, mode=mode, frame_no=args.frame_no)
     item_dataloader = DataLoader(item_dataset, batch_size=test_batch_size,
                                  num_workers=args.num_workers, pin_memory=True)
     item_scoring = []
@@ -114,11 +138,42 @@ def get_fusion_score(model, item_scoring_text, item_scoring_image, item_scoring_
         elif args.item_tower == 'text_image':
             item_scoring_text = item_scoring_text.to(local_rank)
             item_scoring_image = item_scoring_image.to(local_rank)
-            item_scoring = model.module.fusion_module(item_scoring_text, item_scoring_image)
+            if args.fusion_method.lower() in ('co_att', 'merge_attn'):
+                text_feats = item_scoring_text.unsqueeze(1) if item_scoring_text.dim() == 2 else item_scoring_text
+                image_feats = item_scoring_image.unsqueeze(1) if item_scoring_image.dim() == 2 else item_scoring_image
+                item_mask = torch.ones(text_feats.size(0), text_feats.size(1), device=local_rank, dtype=torch.long)
+                item_scoring = model.module.fusion_module(text_feats, item_mask, image_feats, item_mask)
+            elif args.fusion_method.lower() == 'coattnfusion':
+                text_feats = item_scoring_text.unsqueeze(1)
+                image_feats = item_scoring_image.unsqueeze(1)
+                item_mask = torch.ones(text_feats.size(0), 1, device=local_rank, dtype=torch.long)
+                item_scoring = model.module.fusion_module(text_feats, item_mask, image_feats, item_mask).squeeze(1)
+            elif args.fusion_method.lower() in ('coattentionsingle', 'crossattentionsingle'):
+                item_scoring = model.module.fusion_module(item_scoring_text, item_scoring_image)
+            else:
+                item_scoring = model.module.fusion_module(item_scoring_text, item_scoring_image)
         elif args.item_tower == 'text_video':
             item_scoring_text = item_scoring_text.to(local_rank)
             item_scoring_video = item_scoring_video.to(local_rank)
-            item_scoring = model.module.fusion_module(item_scoring_text, item_scoring_video)
+            if args.fusion_method.lower() in ('co_att', 'merge_attn'):
+                text_feats = item_scoring_text.unsqueeze(1) if item_scoring_text.dim() == 2 else item_scoring_text
+                video_feats = item_scoring_video.unsqueeze(1) if item_scoring_video.dim() == 2 else item_scoring_video
+                item_mask = torch.ones(text_feats.size(0), text_feats.size(1), device=local_rank, dtype=torch.long)
+                item_scoring = model.module.fusion_module(text_feats, item_mask, video_feats, item_mask)
+            elif args.fusion_method.lower() == 'coattnfusion':
+                text_feats = item_scoring_text.unsqueeze(1)
+                video_feats = item_scoring_video.unsqueeze(1)
+                item_mask = torch.ones(text_feats.size(0), 1, device=local_rank, dtype=torch.long)
+                item_scoring = model.module.fusion_module(text_feats, item_mask, video_feats, item_mask).squeeze(1)
+            elif args.fusion_method.lower() == 'crossattentionseq':
+                if item_scoring_text.dim() != 3:
+                    raise ValueError('crossAttentionSeq expects item_scoring_text to be a token sequence tensor [N, L, D].')
+                text_mask = item_scoring_text.abs().sum(dim=-1).ne(0).long()
+                item_scoring = model.module.fusion_module(item_scoring_text, text_mask, item_scoring_video)
+            elif args.fusion_method.lower() in ('coattentionsingle', 'crossattentionsingle'):
+                item_scoring = model.module.fusion_module(item_scoring_text, item_scoring_video)
+            else:
+                item_scoring = model.module.fusion_module(item_scoring_text, item_scoring_video)
 
     return item_scoring.to(torch.device('cpu')).detach()
 

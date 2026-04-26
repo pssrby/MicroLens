@@ -1,18 +1,22 @@
+import os
 import torch
 import numpy as np
 from torch import nn
 from torch.nn.init import xavier_normal_
 from collections import Counter
 import torch.nn.functional as F
+from .Attention_Fusion import CoAttention, MergedAttention
 
 from .text_encoders import TextEmbedding
+from .text_encoders import TextEmbedding, TextFeatureEncoder
 from .video_encoders import VideoMaeEncoder, R3D18Encoder, R3D50Encoder, C2D50Encoder
 from .video_encoders import I3D50Encoder, CSN101Encoder, SLOW50Encoder, EX3DSEncoder
 from .video_encoders import EX3DXSEncoder, X3DXSEncoder, X3DSEncoder, X3DMEncoder
 from .video_encoders import X3DLEncoder, MVIT16Encoder, MVIT16X4Encoder, MVIT32X3Encoder
 from .video_encoders import SLOWFAST50Encoder, SLOWFAST16X8101Encoder
+from .video_encoders import VideoFeatureEncoder
 from .image_encoders import VitEncoder, ResnetEncoder, MaeEncoder, SwinEncoder 
-from .fusion_module import MoEFusion, SumFusion, ConcatFusion, FiLM, GatedFusion 
+from .fusion_module import MoEFusion, SumFusion, ConcatFusion, FiLM, GatedFusion, CoAttnFusion, CoAttentionSingle, CrossAttentionSingle, CrossAttentionSeq 
 from .user_encoders import User_Encoder_GRU4Rec, User_Encoder_SASRec, User_Encoder_NextItNet
 
 class Model(torch.nn.Module):
@@ -43,10 +47,14 @@ class Model(torch.nn.Module):
                 self.image_encoder = VitEncoder(image_net=image_net, args=args)
 
         if args.item_tower in ('text', 'modal', 'text_image', 'text_video'):
-            self.text_content = torch.LongTensor(text_content)
-            self.text_encoder = TextEmbedding(args=args, bert_model=bert_model)
+            if args.text_feature_path in [None, 'None', 'none', '']:
+                self.text_content = torch.LongTensor(text_content)
+                self.text_encoder = TextEmbedding(args=args, bert_model=bert_model)
+            else:
+                self.text_content = None
+                self.text_encoder = TextFeatureEncoder(args=args)
         
-        if args.item_tower in ('video', 'modal', 'text_video'):
+        if args.item_tower in ('video', 'modal', 'text_video') and args.video_feature_path in [None, 'None', 'none', '']:
             if 'mae' in args.video_model_load:
                 self.video_encoder = VideoMaeEncoder(video_net=video_net, args=args)
             elif 'r3d18' in args.video_model_load:
@@ -83,6 +91,9 @@ class Model(torch.nn.Module):
                 self.video_encoder = SLOWFAST50Encoder(video_net=video_net, args=args)
             elif 'slowfast16x8-101' in args.video_model_load:
                 self.video_encoder = SLOWFAST16X8101Encoder(video_net=video_net, args=args)
+        if args.item_tower in ('video', 'modal', 'text_video') and args.video_feature_path not in [None, 'None', 'none', '']:
+            if 'slowfast-50' in args.video_model_load:
+                self.video_encoder = VideoFeatureEncoder(args=args)
 
         self.id_encoder = nn.Embedding(item_num + 1, args.embedding_dim, padding_idx=0)
         xavier_normal_(self.id_encoder.weight.data)
@@ -98,9 +109,21 @@ class Model(torch.nn.Module):
         elif fusion == 'sum' and args.item_tower in ('modal', 'text_image', 'text_video', 'text'):
             self.fusion_module = SumFusion(args=args)
         elif fusion == 'film' and args.item_tower in ('modal', 'text_image', 'text_video', 'text'):
-            self.fusion_module = FiLM(args=args)
+            self.fusion_module = FiLM(args=args, x_film=False)
         elif fusion == 'gated' and args.item_tower in ('modal', 'text_image', 'text_video', 'text'):
             self.fusion_module = GatedFusion(args=args)
+        elif fusion == 'co_att' :
+            self.fusion_module = CoAttention.from_pretrained("~/model/pretrained_models/bert/bert-base-uncased", args=args)
+        elif fusion == 'merge_attn':
+            self.fusion_module = MergedAttention.from_pretrained("~/model/pretrained_models/bert/bert-base-uncased",args=args)
+        elif fusion == 'coattnfusion':
+            self.fusion_module = CoAttnFusion(args=args)
+        elif fusion == 'coattentionsingle':
+            self.fusion_module = CoAttentionSingle(args=args)
+        elif fusion == 'crossattentionsingle':
+            self.fusion_module = CrossAttentionSingle(args=args)
+        elif fusion == 'crossattentionseq':
+            self.fusion_module = CrossAttentionSeq(args=args)
         else:
             # fallback to concat for modal as default, or no fusion for single modality.
             if args.item_tower in ('modal', 'text_image', 'text_video', 'text'):
@@ -118,19 +141,63 @@ class Model(torch.nn.Module):
         self.pop_prob_list = self.pop_prob_list.to(local_rank)
         debias_logits = torch.log(self.pop_prob_list[sample_items_id.view(-1)])
 
+        sequence_fused_embs = None
+
         if 'modal' == args.item_tower:
-            input_all_text = self.text_encoder(sample_items_text.long())
+            if args.text_feature_path in [None, 'None', 'none', '']:
+                input_all_text = self.text_encoder(sample_items_text.long())
+            else:
+                input_all_text = self.text_encoder(sample_items_text)
             input_all_image = self.image_encoder(sample_items_image)
             input_all_video = self.video_encoder(sample_items_video)
             score_embs = self.fusion_module(input_all_text, input_all_image, input_all_video)
         elif 'text_image' == args.item_tower:
-            input_all_text = self.text_encoder(sample_items_text.long())
+            if args.text_feature_path in [None, 'None', 'none', '']:
+                input_all_text = self.text_encoder(sample_items_text.long())
+            else:
+                input_all_text = self.text_encoder(sample_items_text)
             input_all_image = self.image_encoder(sample_items_image)
-            score_embs = self.fusion_module(input_all_text, input_all_image)
+            if args.fusion_method.lower() in ('co_att', 'merge_attn', 'coattnfusion'):
+                text_feats = input_all_text.unsqueeze(1) if input_all_text.dim() == 2 else input_all_text
+                image_feats = input_all_image.unsqueeze(1) if input_all_image.dim() == 2 else input_all_image
+                item_mask = (sample_items_id.view(-1) != 0).long().unsqueeze(-1)
+                score_embs = self.fusion_module(text_feats, item_mask, image_feats, item_mask)
+            elif args.fusion_method.lower() in ('coattentionsingle', 'crossattentionsingle'):
+                score_embs = self.fusion_module(input_all_text, input_all_image)
+            else:
+                score_embs = self.fusion_module(input_all_text, input_all_image)
         elif 'text_video' == args.item_tower:
-            input_all_text = self.text_encoder(sample_items_text.long())
+            text_seq = None
+            text_seq_mask = None
+            if args.text_feature_path in [None, 'None', 'none', '']:
+                if args.fusion_method.lower() == 'crossattentionseq':
+                    input_all_text, text_seq_mask = self.text_encoder.forward_sequence(sample_items_text.long())
+                    text_seq = input_all_text
+                else:
+                    input_all_text = self.text_encoder(sample_items_text.long())
+            else:
+                input_all_text = self.text_encoder(sample_items_text)
             input_all_video = self.video_encoder(sample_items_video)
-            score_embs = self.fusion_module(input_all_text, input_all_video)
+            if args.fusion_method.lower() in ('co_att', 'merge_attn'):
+                text_feats = input_all_text.unsqueeze(1) if input_all_text.dim() == 2 else input_all_text
+                video_feats = input_all_video.unsqueeze(1) if input_all_video.dim() == 2 else input_all_video
+                item_mask = (sample_items_id.view(-1) != 0).long().unsqueeze(-1)
+                score_embs = self.fusion_module(text_feats, item_mask, video_feats, item_mask)
+            elif args.fusion_method.lower() == 'coattnfusion':
+                batch_size = log_mask.size(0)
+                text_seq = input_all_text.view(batch_size, self.max_seq_len + 1, self.args.embedding_dim)
+                video_seq = input_all_video.view(batch_size, self.max_seq_len + 1, self.args.embedding_dim)
+                item_mask = sample_items_id.view(batch_size, self.max_seq_len + 1).ne(0).long()
+                sequence_fused_embs = self.fusion_module(text_seq, item_mask, video_seq, item_mask)
+                score_embs = sequence_fused_embs.view(-1, self.args.embedding_dim)
+            elif args.fusion_method.lower() == 'crossattentionseq':
+                if text_seq is None or text_seq_mask is None:
+                    raise ValueError('crossAttentionSeq requires online text encoder features, not precomputed text features.')
+                score_embs = self.fusion_module(text_seq, text_seq_mask, input_all_video)
+            elif args.fusion_method.lower() in ('coattentionsingle', 'crossattentionsingle'):
+                score_embs = self.fusion_module(input_all_text, input_all_video)
+            else:
+                score_embs = self.fusion_module(input_all_text, input_all_video)
         elif 'text' == args.item_tower:
             ## TO MAKE text+id
             # input_all_text = self.text_encoder(sample_items_text.long())
@@ -141,7 +208,17 @@ class Model(torch.nn.Module):
             # # os._exit(0)
             # score_embs = self.fusion_module(input_all_id, input_all_text)
             ## TO MAKE text+id
-            score_embs = self.text_encoder(sample_items_text.long())
+            if args.text_feature_path in [None, 'None', 'none', '']:
+                score_embs = self.text_encoder(sample_items_text.long())
+            else:
+                if torch.isnan(sample_items_text).any():
+                    print('sample_items_text has nan')
+                    print(sample_items_text)
+                    os._exit(0)
+                score_embs = self.text_encoder(sample_items_text)
+            if torch.isnan(score_embs).any():
+                print('score_embs has nan')
+                os._exit(0)
         elif 'image' == args.item_tower:
             score_embs = self.image_encoder(sample_items_image)
         elif 'video' == args.item_tower:
@@ -149,7 +226,7 @@ class Model(torch.nn.Module):
         elif 'id' == args.item_tower:
             score_embs = self.id_encoder(sample_items_id)
 
-        input_embs = score_embs.view(-1, self.max_seq_len + 1, self.args.embedding_dim)        
+        input_embs = score_embs.view(-1, self.max_seq_len + 1, self.args.embedding_dim) if sequence_fused_embs is None else sequence_fused_embs
         if self.args.model == 'sasrec':
             prec_vec = self.user_encoder(input_embs[:, :-1, :], log_mask, local_rank)
         else:

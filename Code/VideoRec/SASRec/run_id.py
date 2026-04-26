@@ -5,15 +5,16 @@ root_data_dir = '~/dataset/'
 root_model_dir = '~/model/'
 
 # dataset = 'bili_food'
-dataset = 'MicroLens-100k-Dataset'
 # tag = 'bilibili_food_'
-tag = 'MicroLens-100k_'
 # behaviors = tag + 'trans_users.tsv'
-behaviors = tag + 'pairs.tsv'
 # text_data = tag + 'trans_items_texts.tsv'
-text_data = tag + 'title_en.csv'
 # image_data = tag + 'trans_items_images.lmdb'
+dataset = 'MicroLens-100k-Dataset'
+tag = 'MicroLens-100k_'
+behaviors = tag + 'pairs.tsv'
+text_data = tag + 'title_en.csv'
 image_data = tag + 'covers_default.lmdb'
+
 frame_interval = 1
 frame_no = 5
 video_data = tag + 'frames_interval_'+str(frame_interval)+'_number_'+str(frame_no)+'.lmdb'
@@ -26,29 +27,29 @@ save_step = 1
 image_resize = 224
 max_video_no = 34321 # 34321 for 10wu
 
-text_model_load = 'bert-base-uncased' # 'bert-base-cn' 
+text_model_load = 'bert-small' #'bert-base-uncased' # 'bert-base-cn' 
 # text_model_load = 'xlm-roberta-base'
 image_model_load = 'clip-vit-base-patch32' # 'vit-b-32-clip' 'resnet50'
 video_model_load = 'slowfast-50' # video-mae
 
 # last 2 layer of trms
-text_freeze_paras_before = 165 #165
+text_freeze_paras_before = 40 #165 198
 image_freeze_paras_before = 9999 #164
 video_freeze_paras_before = 9999 #270
 
 mode = 'train' # train test
-item_tower = 'text' # modal, text, image, video, id, text_image, text_video
+item_tower = 'text_video' # modal, text, image, video, id, text_image, text_video
 
-epoch = 100
+epoch = 50
 load_ckpt_name = 'None'
 # load_ckpt_name = 'epoch-200.pt'
-load_ckpt_name = 'epoch-50.pt'
+# load_ckpt_name = 'epoch-35.pt'
 
 weight_decay = 0.1
 drop_rate = 0.1
 batch_size_list = [512]
 
-embedding_dim_list = [256]
+embedding_dim_list = [512]
 lr_list = [1e-4]
 text_fine_tune_lr_list = [1e-4]
 image_fine_tune_lr_list = [1e-4]
@@ -58,12 +59,14 @@ index_list = [0]
 scheduler = 'step_schedule_with_warmup'
 scheduler_gap = 1
 scheduler_alpha = 1
-version = 'v2'
-num_workers = 16
-fusion_method = 'film' # none, sum, concat, film, gated, moe
+version = 'vcrossattentionsingle'
+num_workers = 4
+fusion_method = 'crossattentionsingle' # none, sum, concat, film, gated, moe, co_att, merge_attn, coattnfusion, coattentionsingle, crossattentionsingle, crossattentionseq
 text_ckpt_path = None #'./pretrain/epoch-44.pt'
 image_ckpt_path = None
-video_ckpt_path = './pretrain/epoch-45.pt'
+video_ckpt_path = None #'./pretrain/epoch-45.pt'
+video_feature_path = '~/dataset/MicroLens-100k-Dataset/MicroLens-100k_frames_interval_1_number_5_encoder2.lmdb' # to input, if using pre-extracted video features
+text_feature_path = None #'~/dataset/MicroLens-100k-Dataset/MicroLens-100k_title_en_encoder2.pt' # to input, if using pre-extracted text features
 
 for batch_size in batch_size_list:
     for embedding_dim in embedding_dim_list:
@@ -78,9 +81,9 @@ for batch_size in batch_size_list:
                         item_tower, batch_size, embedding_dim, lr,
                         drop_rate, weight_decay, max_seq_len)
 
-                run_py = "CUDA_VISIBLE_DEVICES='2,3' \
+                run_py = "CUDA_VISIBLE_DEVICES='0,1,2,3' \
                         torchrun \
-                        --nproc_per_node 2 --master_port 29500 main.py \
+                        --nproc_per_node 4 --master_port 29500 main.py \
                         --root_data_dir {} --root_model_dir {} --dataset {} --behaviors {} --text_data {}  --image_data {} --video_data {}\
                         --mode {} --item_tower {} --load_ckpt_name {} --label_screen {} --logging_num {} --save_step {}\
                         --testing_num {} --weight_decay {} --drop_rate {} --batch_size {} --lr {} --embedding_dim {}\
@@ -90,7 +93,7 @@ for batch_size in batch_size_list:
                         --scheduler {} --scheduler_gap {} --scheduler_alpha {} --max_video_no {}\
                         --version {} \
                         --num_workers {} --fusion_method {} \
-                        --text_ckpt_path {} --image_ckpt_path {} --video_ckpt_path {}".format(
+                        --text_ckpt_path {} --image_ckpt_path {} --video_ckpt_path {} --video_feature_path {} --text_feature_path {}".format(
                         root_data_dir, root_model_dir, dataset, behaviors, text_data, image_data, video_data,
                         mode, item_tower, load_ckpt_name, label_screen, logging_num, save_step,
                         testing_num,weight_decay, drop_rate, batch_size, lr, embedding_dim,
@@ -99,6 +102,6 @@ for batch_size in batch_size_list:
                         text_fine_tune_lr, image_fine_tune_lr, video_fine_tune_lr, 
                         scheduler, scheduler_gap, scheduler_alpha, max_video_no,
                         version, num_workers, fusion_method, 
-                        text_ckpt_path, image_ckpt_path, video_ckpt_path)
+                        text_ckpt_path, image_ckpt_path, video_ckpt_path, video_feature_path, text_feature_path)
             
                 os.system(run_py)

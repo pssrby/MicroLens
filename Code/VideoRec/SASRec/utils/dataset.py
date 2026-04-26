@@ -68,10 +68,28 @@ class ModalDataset(Dataset):
         tokens_Len = len(tokens)
         mask_len_head = self.max_seq_len - seq_Len
         log_mask = [0] * mask_len_head + [1] * tokens_Len
+        use_text = self.args.item_tower in ['text', 'text_image', 'text_video']
+        use_image = self.args.item_tower in ['image', 'text_image', 'modal']
+        use_video = self.args.item_tower in ['video', 'text_video', 'modal']
+        sample_items_id = None
+        sample_items_image = None
+        sample_items_video = None
+        sample_items_text = None
 
-        sample_items_text = np.zeros((self.max_seq_len, self.text_size * 2))
-        sample_items_image = np.zeros((self.max_seq_len, 3, self.resize, self.resize))
-        sample_items_video = np.zeros((self.max_seq_len, self.args.frame_no, 3, 224, 224))
+        if use_text:
+            if self.args.text_feature_path in [None, 'None', 'none', '']:
+                sample_items_text = np.zeros((self.max_seq_len, self.text_size * 2), dtype=np.int64)
+            else:
+                sample_items_text = np.zeros((self.max_seq_len, self.item_content.shape[1]), dtype=np.float32)
+
+        if use_image:
+            sample_items_image = np.zeros((self.max_seq_len, 3, self.resize, self.resize), dtype=np.float32)
+
+        if use_video:
+            if self.args.video_feature_path in [None, 'None', 'none', '']:
+                sample_items_video = np.zeros((self.max_seq_len, self.args.frame_no, 3, 224, 224), dtype=np.float32)
+            else:
+                sample_items_video = np.zeros((self.max_seq_len, 400), dtype=np.float32)
         sample_items_id = [0] * mask_len_head + seq
 
         ##################################### Text #####################################
@@ -80,15 +98,17 @@ class ModalDataset(Dataset):
         # Set attention_mask[0]=1 for padding rows.
         # if mask_len_head > 0:
         #     sample_items_text[:mask_len_head, self.text_size] = 1
-        for i in range(tokens_Len):
-            # pos
-            sample_items_text[mask_len_head + i] = self.item_content[seq[i]]
-        # target
-        sample_items_text[mask_len_head + tokens_Len] = self.item_content[seq[-1]]
-        sample_items_text = torch.LongTensor(sample_items_text)
+        if use_text:
+            for i in range(tokens_Len):
+                sample_items_text[mask_len_head + i] = self.item_content[seq[i]]
+            sample_items_text[mask_len_head + tokens_Len] = self.item_content[seq[-1]]
+            if self.args.text_feature_path in [None, 'None', 'none', '']:
+                sample_items_text = torch.LongTensor(sample_items_text)
+            else:
+                sample_items_text = torch.FloatTensor(sample_items_text)
 
         ##################################### Image #####################################
-        if self.args.item_tower != 'text_video':
+        if use_image:
             env = lmdb.open(self.image_db_path, subdir=os.path.isdir(self.image_db_path),
                             readonly=True, lock=False, readahead=False, meminit=False)
             with env.begin() as txn:
@@ -101,24 +121,36 @@ class ModalDataset(Dataset):
                 IMAGE = pickle.loads(txn.get(self.item_id_to_keys[seq[-1]].encode()))
                 image_trans = np.copy(np.frombuffer(IMAGE.image, dtype=np.float32)).reshape(3, 224, 224) 
                 sample_items_image[mask_len_head + tokens_Len] = image_trans
-        sample_items_image = torch.FloatTensor(sample_items_image)
+            sample_items_image = torch.FloatTensor(sample_items_image)
 
         ##################################### video #####################################
-        if self.args.item_tower != 'text_image':
-            env = lmdb.open(self.video_db_path, subdir=os.path.isdir(self.video_db_path),
+        if use_video:
+            video_db_path = self.video_db_path
+            if self.args.video_feature_path not in [None, 'None', 'none', '']:
+                video_db_path = os.path.expanduser(self.args.video_feature_path)
+            env = lmdb.open(video_db_path, subdir=os.path.isdir(video_db_path),
                             readonly=True, lock=False, readahead=False, meminit=False)
             with env.begin() as txn:
                 for i in range(tokens_Len):
                     # pos
                     VIDEO = pickle.loads(txn.get(self.item_id_to_keys[seq[i]].encode()))
-                    VIDEO = np.copy(np.frombuffer(VIDEO.video, dtype=np.float32)).reshape(self.args.frame_no, 3, 224, 224)
+                    if self.args.video_feature_path in [None, 'None', 'none', '']:
+                        VIDEO = np.copy(np.frombuffer(VIDEO.video, dtype=np.float32)).reshape(self.args.frame_no, 3, 224, 224)
                     sample_items_video[mask_len_head + i] = VIDEO
 
                 # target
                 VIDEO = pickle.loads(txn.get(self.item_id_to_keys[seq[-1]].encode()))
-                VIDEO = np.copy(np.frombuffer(VIDEO.video, dtype=np.float32)).reshape(self.args.frame_no, 3, 224, 224)
+                if self.args.video_feature_path in [None, 'None', 'none', '']:
+                    VIDEO = np.copy(np.frombuffer(VIDEO.video, dtype=np.float32)).reshape(self.args.frame_no, 3, 224, 224)
                 sample_items_video[mask_len_head + tokens_Len] = VIDEO
-        sample_items_video = torch.FloatTensor(sample_items_video)
+            sample_items_video = torch.FloatTensor(sample_items_video)
+        if sample_items_text is None:
+            sample_items_text = torch.empty(0)
+        if sample_items_image is None:
+            sample_items_image = torch.empty(0)
+        if sample_items_video is None:
+            sample_items_video = torch.empty(0)
+
         sample_items_id = torch.LongTensor(sample_items_id)
         return sample_items_id, sample_items_text, sample_items_image, sample_items_video, \
             torch.FloatTensor(log_mask)
@@ -170,6 +202,35 @@ class ImageDataset(Dataset):
         sample_items = torch.FloatTensor(sample_items)
         return sample_id_items, sample_items, torch.FloatTensor(log_mask)
 
+class TextFeatureDataset(Dataset):
+    def __init__(self, userseq, text_features, max_seq_len, item_num, item_id_to_keys):
+        self.userseq = userseq
+        self.text_features = text_features
+        self.max_seq_len = max_seq_len + 1
+        self.item_num = item_num
+        self.item_id_to_keys = item_id_to_keys
+        self.text_feature_dim = text_features.shape[1]
+
+    def __len__(self):
+        return len(self.userseq)
+
+    def __getitem__(self, index):
+        seq = self.userseq[index]
+        seq_len = len(seq)
+        tokens_len = seq_len - 1
+        mask_len_head = self.max_seq_len - seq_len
+        log_mask = [0] * mask_len_head + [1] * tokens_len
+
+        sample_id_items = [0] * mask_len_head + seq
+        sample_items = np.zeros((self.max_seq_len, self.text_feature_dim), dtype=np.float32)
+        for i in range(tokens_len):
+            sample_items[mask_len_head + i] = self.text_features[seq[i]]
+        sample_items[mask_len_head + tokens_len] = self.text_features[seq[-1]]
+
+        sample_items = torch.FloatTensor(sample_items)
+        sample_id_items = torch.LongTensor(sample_id_items)
+        return sample_id_items, sample_items, torch.FloatTensor(log_mask)
+
 class TextDataset(Dataset):
     def __init__(self, userseq, item_content, max_seq_len, item_num, text_size):
         self.userseq = userseq
@@ -205,6 +266,45 @@ class TextDataset(Dataset):
         sample_id_items = torch.LongTensor(sample_id_items)
         return sample_id_items, sample_items, torch.FloatTensor(log_mask)
 
+class VideoFeatureDataset(Dataset):
+    def __init__(self, u2seq, item_num, max_seq_len, item_id_to_keys, feature_db_path):
+        self.u2seq = u2seq
+        self.item_num = item_num
+        self.max_seq_len = max_seq_len + 1
+        self.item_id_to_keys = item_id_to_keys
+        self.db_path = feature_db_path
+
+    def __len__(self):
+        return len(self.u2seq)
+
+    def __getitem__(self, user_id):
+        seq = self.u2seq[user_id]
+        seq_Len = len(seq)
+        tokens_Len = len(seq) - 1
+        mask_len_head = self.max_seq_len - seq_Len
+        log_mask = [0] * mask_len_head + [1] * tokens_Len
+
+        sample_items = np.zeros((self.max_seq_len, 400)) 
+        sample_id_items = [0] * mask_len_head + seq
+
+        env = lmdb.open(self.db_path, subdir=os.path.isdir(self.db_path),
+                        readonly=True, lock=False, readahead=False, meminit=False)
+
+        with env.begin() as txn:
+            for i in range(tokens_Len):
+                # pos
+                VIDEO = pickle.loads(txn.get(self.item_id_to_keys[seq[i]].encode()))
+                # VIDEO = np.copy(np.frombuffer(VIDEO.video, dtype=np.float32)).reshape(self.frame_no, 3, 224, 224) 
+                sample_items[mask_len_head + i] = VIDEO
+
+            # target
+            VIDEO = pickle.loads(txn.get(self.item_id_to_keys[seq[-1]].encode()))
+            # VIDEO = np.copy(np.frombuffer(VIDEO.video, dtype=np.float32)).reshape(self.frame_no, 3, 224, 224) 
+            sample_items[mask_len_head + tokens_Len] = VIDEO
+
+        sample_id_items = torch.LongTensor(sample_id_items)
+        sample_items = torch.FloatTensor(sample_items)
+        return sample_id_items, sample_items, torch.FloatTensor(log_mask)
 class VideoDataset(Dataset):
     def __init__(self, u2seq, item_num, max_seq_len, item_id_to_keys, db_path, frame_no):
         self.u2seq = u2seq
@@ -310,6 +410,8 @@ class LmdbEvalDataset(Dataset):
         self.frame_no = frame_no
         if mode == 'image':
             self.padding_emb = torch.zeros((3, 224, 224)) 
+        elif mode == 'video_feature':
+            self.padding_emb = torch.zeros((400,))
         else:
             self.padding_emb = torch.zeros((self.frame_no, 3, 224, 224)) 
 
@@ -327,8 +429,10 @@ class LmdbEvalDataset(Dataset):
         if index == 0:
             if self.mode == 'image':
                 return torch.zeros((3, 224, 224)) 
-            else:
+            elif self.mode == 'video':
                 return torch.zeros((self.frame_no, 3, 224, 224)) 
+            elif self.mode == 'video_feature':
+                return torch.zeros((400,)) 
 
         env = lmdb.open(self.db_path, subdir=os.path.isdir(self.db_path), \
             readonly=True, lock=False, readahead=False, meminit=False)
@@ -337,9 +441,12 @@ class LmdbEvalDataset(Dataset):
         if self.mode == 'image':
             IMAGE = pickle.loads(byteflow)
             output = np.frombuffer(IMAGE.image, dtype=np.float32).reshape(3, 224, 224) 
-        else:
+        elif self.mode == 'video':
             VIDEO = pickle.loads(byteflow)
             output = np.frombuffer(VIDEO.video, dtype=np.float32).reshape(self.frame_no, 3, 224, 224) 
+        elif self.mode == 'video_feature':
+            VIDEO_FEATURE = pickle.loads(byteflow)
+            output = VIDEO_FEATURE
         return torch.FloatTensor(output)
 
 class SequentialDistributedSampler(torch.utils.data.sampler.Sampler):

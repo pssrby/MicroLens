@@ -79,10 +79,14 @@ def parse_args():
     parser.add_argument('--node_rank', default=0, type=int)
 
     # ============== fusion methods ==============
-    parser.add_argument('--fusion_method', type=str, default='concat', choices=['none', 'sum', 'concat', 'film', 'gated', 'moe'])
+    parser.add_argument('--fusion_method', type=str, default='concat', choices=['none', 'sum', 'concat', 'film', 'gated', 'moe', 'co_att', 'merge_attn', 'coattnfusion', 'coattentionsingle', 'crossattentionsingle', 'crossattentionseq'])
+    parser.add_argument('--num_co_attn_fuse_layers', type=int, default=1)
+    parser.add_argument('--num_merge_attn_fuse_layers', type=int, default=1)
     parser.add_argument("--text_ckpt_path", type=str, default=None)
     parser.add_argument("--image_ckpt_path", type=str, default=None) 
     parser.add_argument("--video_ckpt_path", type=str, default=None) 
+    parser.add_argument("--video_feature_path", type=str, default=None)
+    parser.add_argument("--text_feature_path", type=str, default=None)
 
     args = parser.parse_args()
 

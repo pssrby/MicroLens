@@ -35,8 +35,8 @@ from utils.lr_decay import *
 from utils.parameters import parse_args
 from utils.load_data import read_texts, read_behaviors_text, read_items, read_behaviors, get_doc_input_bert, read_videos
 from utils.logging_utils import para_and_log, report_time_train, report_time_eval, save_model, setuplogger, get_time
-from utils.dataset import IdDataset, ModalDataset, TextDataset, ImageDataset, VideoDataset, LMDB_Image, LMDB_VIDEO
-from utils.metrics import get_item_text_score, get_item_id_score, get_item_image_score, get_item_video_score, eval_model, get_fusion_score
+from utils.dataset import IdDataset, ModalDataset, TextDataset, ImageDataset, VideoDataset, LMDB_Image, LMDB_VIDEO, VideoFeatureDataset, TextFeatureDataset
+from utils.metrics import get_item_text_score, get_item_text_score_sequence, get_item_id_score, get_item_image_score, get_item_video_score, eval_model, get_fusion_score
 # from utils.metrics_dnn import get_item_text_score, get_item_id_score, get_item_image_score, get_item_video_score, eval_model, get_fusion_score
 
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
@@ -85,7 +85,7 @@ def train(args, model_dir, Log_file, Log_screen, start_time, local_rank):
     tokenizer = None
 
     # ========================================== Text and Image Encoders ===========================================
-    if args.item_tower in ('modal', 'text', 'text_image', 'text_video'):
+    if args.item_tower in ('modal', 'text', 'text_image', 'text_video') and args.text_feature_path in [None, 'None', 'none', '']:
         if 'roberta-base-en' in args.text_model_load:
             Log_file.info('load roberta model...')
             text_model_load = os.path.abspath(os.path.join(args.root_model_dir, 'pretrained_models/bert', args.text_model_load))
@@ -140,9 +140,18 @@ def train(args, model_dir, Log_file, Log_screen, start_time, local_rank):
                 pooler_para = [389, 390]
                 args.word_embedding_dim = 1024
 
+        frozen_text_param_names = []
         for index, (name, param) in enumerate(text_model.named_parameters()):
             if index < args.text_freeze_paras_before or index in pooler_para:
                 param.requires_grad = False
+                frozen_text_param_names.append(f'[{index}] {name}')
+
+        if len(frozen_text_param_names) > 0:
+            Log_file.info('frozen text encoder parameters:')
+            for frozen_name in frozen_text_param_names:
+                Log_file.info(frozen_name)
+        else:
+            Log_file.info('no text encoder parameters were frozen')
 
         if 'text' == args.item_tower:
             image_model = None
@@ -201,7 +210,7 @@ def train(args, model_dir, Log_file, Log_screen, start_time, local_rank):
             text_model = None
             video_model = None
     
-    if args.item_tower in ('modal', 'video', 'text_video'):
+    if args.item_tower in ('modal', 'video', 'text_video') and args.video_feature_path in [None, 'None', 'none', '']:
         if 'video-mae' in args.video_model_load:
             Log_file.info('load video mae model...')
             configuration = VideoMAEConfig(num_frames=args.frame_no)
@@ -286,17 +295,44 @@ def train(args, model_dir, Log_file, Log_screen, start_time, local_rank):
     item_id_to_keys = None
 
     if args.item_tower in ('modal', 'text', 'text_image', 'text_video'):
-        Log_file.info('read texts ...')
-        item_dic_titles_after_tokenizer, before_item_name_to_index, before_item_index_to_name = read_texts(tokenizer, args)
+        if args.text_feature_path in [None, 'None', 'none', '']:
+            Log_file.info('read texts ...')
+            item_dic_titles_after_tokenizer, before_item_name_to_index, before_item_index_to_name = read_texts(tokenizer, args)
 
-        Log_file.info('read behaviors ...')
-        item_num, item_dic_titles_after_tokenizer, item_name_to_index, users_train, users_valid, users_history_for_valid, pop_prob_list = \
-            read_behaviors_text(item_dic_titles_after_tokenizer, before_item_name_to_index, before_item_index_to_name, Log_file, args)
+            Log_file.info('read behaviors ...')
+            item_num, item_dic_titles_after_tokenizer, item_name_to_index, users_train, users_valid, users_history_for_valid, pop_prob_list = \
+                read_behaviors_text(item_dic_titles_after_tokenizer, before_item_name_to_index, before_item_index_to_name, Log_file, args)
 
-        Log_file.info('combine text information...')
-        text_title, text_title_attmask = get_doc_input_bert(item_dic_titles_after_tokenizer, item_name_to_index, args)
+            Log_file.info('combine text information...')
+            text_title, text_title_attmask = get_doc_input_bert(item_dic_titles_after_tokenizer, item_name_to_index, args)
 
-        item_content = np.concatenate([text_title, text_title_attmask], axis=1)
+            item_content = np.concatenate([text_title, text_title_attmask], axis=1)
+        else:
+            Log_file.info('read images/videos/id...')
+            before_item_id_to_keys, before_item_name_to_id = read_items(args)
+
+            Log_file.info('read behaviors...')
+            item_num, item_id_to_keys, users_train, users_valid, users_history_for_valid, pop_prob_list = read_behaviors(before_item_id_to_keys, before_item_name_to_id, Log_file, args)
+            Log_file.info('load precomputed text features...')
+            text_feature_data = torch.load(args.text_feature_path, map_location='cpu')
+            if isinstance(text_feature_data, dict) and 'features' in text_feature_data:
+                item_content = text_feature_data['features']
+            else:
+                item_content = text_feature_data
+            if isinstance(item_content, torch.Tensor):
+                item_content = item_content.cpu().numpy()
+            reordered_item_content = np.zeros((item_num + 1, item_content.shape[1]), dtype=item_content.dtype)
+            for item_id, raw_doc_name in item_id_to_keys.items():
+                reordered_item_content[item_id] = item_content[int(raw_doc_name)]
+            item_content = reordered_item_content
+            Log_file.info(f'loaded text feature has nan: {np.isnan(item_content).any()}')
+            if np.isnan(item_content).any():
+                nan_rows = np.where(np.isnan(item_content).any(axis=1))[0]
+                Log_file.info(f'nan row count: {len(nan_rows)}')
+                Log_file.info(f'first nan rows: {nan_rows[:20].tolist()}')
+                os._exit(0)
+            args.word_embedding_dim = int(item_content.shape[1])
+            Log_file.info('precomputed text feature dim: {}'.format(args.word_embedding_dim))
 
     if args.item_tower in ('modal', 'image', 'video', 'id', 'text_image', 'text_video'):
         Log_file.info('read images/videos/id...')
@@ -368,19 +404,33 @@ def train(args, model_dir, Log_file, Log_screen, start_time, local_rank):
                                     resize=args.image_resize)
 
     elif 'text' == args.item_tower:
-        train_dataset = TextDataset(userseq=users_train, 
-                                   item_content=item_content, 
-                                   max_seq_len=args.max_seq_len,
-                                   item_num=item_num, 
-                                   text_size=args.num_words_title)
+        if args.text_feature_path in [None, 'None', 'none', '']:
+            train_dataset = TextDataset(userseq=users_train, 
+                                       item_content=item_content, 
+                                       max_seq_len=args.max_seq_len,
+                                       item_num=item_num, 
+                                       text_size=args.num_words_title)
+        else:
+            train_dataset = TextFeatureDataset(userseq=users_train,
+                                              text_features=item_content,
+                                              max_seq_len=args.max_seq_len,
+                                              item_num=item_num,
+                                              item_id_to_keys=item_id_to_keys)
 
     elif 'video' == args.item_tower:
-        train_dataset = VideoDataset(u2seq=users_train,
-                                    item_num=item_num,
-                                    max_seq_len=args.max_seq_len,
-                                    db_path=os.path.join(args.root_data_dir, args.dataset, args.video_data),
-                                    item_id_to_keys=item_id_to_keys,
-                                    frame_no=args.frame_no)
+        if args.video_feature_path in [None, 'None', 'none', '']:
+            train_dataset = VideoDataset(u2seq=users_train,
+                                        item_num=item_num,
+                                        max_seq_len=args.max_seq_len,
+                                        db_path=os.path.join(args.root_data_dir, args.dataset, args.video_data),
+                                        item_id_to_keys=item_id_to_keys,
+                                        frame_no=args.frame_no)
+        else:
+            train_dataset = VideoFeatureDataset(u2seq=users_train,
+                                               item_num=item_num,
+                                               max_seq_len=args.max_seq_len,
+                                               item_id_to_keys=item_id_to_keys,
+                                               feature_db_path=args.video_feature_path)
 
     elif 'id' == args.item_tower:
         train_dataset = IdDataset(u2seq=users_train, 
@@ -542,9 +592,15 @@ def train(args, model_dir, Log_file, Log_screen, start_time, local_rank):
                 sample_items_id, sample_items_text, sample_items_image, sample_items_video, log_mask = \
                     sample_items_id.to(local_rank), sample_items_text.to(local_rank), \
                         sample_items_image.to(local_rank), sample_items_video.to(local_rank), log_mask.to(local_rank)
-                sample_items_text = sample_items_text.view(-1, args.num_words_title * 2)
+                if args.text_feature_path in [None, 'None', 'none', '']:
+                    sample_items_text = sample_items_text.view(-1, args.num_words_title * 2)
+                else:
+                    sample_items_text = sample_items_text.view(-1, sample_items_text.size(-1))
                 sample_items_image = sample_items_image.view(-1, 3, args.image_resize, args.image_resize)
-                sample_items_video = sample_items_video.view(-1, args.frame_no, 3, 224, 224)
+                if args.video_feature_path in [None, 'None', 'none', '']:
+                    sample_items_video = sample_items_video.view(-1, args.frame_no, 3, 224, 224)
+                else:
+                    sample_items_video = sample_items_video.view(-1, sample_items_video.size(-1))
                 sample_items_id = sample_items_id.view(-1)
 
             elif 'text' == args.item_tower:
@@ -564,7 +620,10 @@ def train(args, model_dir, Log_file, Log_screen, start_time, local_rank):
 # 注意它不包含最后的 target 那个位置（所以长度是 max_seq_len 而不是 max_seq_len+1）
                 sample_items_id, sample_items_text, log_mask = \
                     sample_items_id.to(local_rank), sample_items_text.to(local_rank), log_mask.to(local_rank)
-                sample_items_text = sample_items_text.view(-1, args.num_words_title * 2)
+                if args.text_feature_path in [None, 'None', 'none', '']:
+                    sample_items_text = sample_items_text.view(-1, args.num_words_title * 2)
+                else:
+                    sample_items_text = sample_items_text.view(-1, sample_items_text.size(-1))
                 sample_items_id = sample_items_id.view(-1)
                 sample_items_image = None
                 sample_items_video = None
@@ -582,7 +641,7 @@ def train(args, model_dir, Log_file, Log_screen, start_time, local_rank):
                 sample_items_id, sample_items_video, log_mask = data
                 sample_items_id, sample_items_video, log_mask = \
                     sample_items_id.to(local_rank), sample_items_video.to(local_rank), log_mask.to(local_rank)
-                sample_items_video =  sample_items_video.view(-1, args.frame_no, 3, 224, 224)
+                sample_items_video =  sample_items_video.view(-1, sample_items_video.size(-1))
                 sample_items_id = sample_items_id.view(-1)
                 sample_items_text = None
                 sample_items_image = None
@@ -614,7 +673,7 @@ def train(args, model_dir, Log_file, Log_screen, start_time, local_rank):
                 need_break = True
                 break
 
-            steps_for_log = 1
+            # steps_for_log = 1
             if batch_index % steps_for_log == 0:
                 Log_file.info('Ed: {}, batch loss: {:.3f}, sum loss: {:.3f}, align: {:.3f}, uniform: {:.3f}'.format(
                     batch_index * args.batch_size, loss.data / batch_index, loss.data, align / batch_index, uniform / batch_index))
@@ -678,7 +737,10 @@ def eval(now_epoch, max_epoch, early_stop_epoch, max_eval_value, early_stop_coun
 
     elif 'text_video' == args.item_tower:
         Log_file.info('get_text_scoring...')
-        item_scoring_text = get_item_text_score(model, item_content, batch_size, args, local_rank)
+        if args.fusion_method.lower() == 'crossattentionseq':
+            item_scoring_text = get_item_text_score_sequence(model, item_content, batch_size, args, local_rank)
+        else:
+            item_scoring_text = get_item_text_score(model, item_content, batch_size, args, local_rank)
         Log_file.info('get_video_scoring...')
         item_scoring_video = get_item_video_score(model, item_num, item_id_to_keys, batch_size, args, local_rank)
         item_scoring = get_fusion_score(model, item_scoring_text, None, item_scoring_video, local_rank, args)
