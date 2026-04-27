@@ -79,7 +79,7 @@ def parse_args():
     parser.add_argument('--node_rank', default=0, type=int)
 
     # ============== fusion methods ==============
-    parser.add_argument('--fusion_method', type=str, default='concat', choices=['none', 'sum', 'concat', 'film', 'gated', 'moe', 'co_att', 'merge_attn', 'coattnfusion', 'coattentionsingle', 'crossattentionsingle', 'crossattentionseq'])
+    parser.add_argument('--fusion_method', type=str, default='concat', choices=['none', 'sum', 'concat', 'film', 'gated', 'moe', 'co_att', 'merge_attn', 'coattnfusion', 'coattentionsingle', 'crossattentionsingle', 'crossattentionseq', 'coattentionseq'])
     parser.add_argument('--num_co_attn_fuse_layers', type=int, default=1)
     parser.add_argument('--num_merge_attn_fuse_layers', type=int, default=1)
     parser.add_argument("--text_ckpt_path", type=str, default=None)
@@ -87,6 +87,12 @@ def parse_args():
     parser.add_argument("--video_ckpt_path", type=str, default=None) 
     parser.add_argument("--video_feature_path", type=str, default=None)
     parser.add_argument("--text_feature_path", type=str, default=None)
+    parser.add_argument('--use_text_video_contrastive', type=int, default=0, choices=[0, 1])
+    parser.add_argument('--text_video_lambda', type=float, default=0.0)
+    parser.add_argument('--text_video_tau', type=float, default=0.07)
+    parser.add_argument('--use_text_video_item_contrastive', type=int, default=0, choices=[0, 1])
+    parser.add_argument('--text_video_item_lambda', type=float, default=0.0)
+    parser.add_argument('--text_video_item_tau', type=float, default=0.07)
 
     args = parser.parse_args()
 

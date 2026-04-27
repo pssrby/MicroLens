@@ -37,13 +37,13 @@ text_freeze_paras_before = 40 #165 198
 image_freeze_paras_before = 9999 #164
 video_freeze_paras_before = 9999 #270
 
-mode = 'train' # train test
+mode = 'test' # train test
 item_tower = 'text_video' # modal, text, image, video, id, text_image, text_video
 
 epoch = 50
 load_ckpt_name = 'None'
 # load_ckpt_name = 'epoch-200.pt'
-# load_ckpt_name = 'epoch-35.pt'
+load_ckpt_name = 'epoch-25.pt'
 
 weight_decay = 0.1
 drop_rate = 0.1
@@ -59,14 +59,20 @@ index_list = [0]
 scheduler = 'step_schedule_with_warmup'
 scheduler_gap = 1
 scheduler_alpha = 1
-version = 'vcrossattentionsingle'
+version = 'v1concat' # for recording different fusion methods, to be added in the futurek
 num_workers = 4
-fusion_method = 'crossattentionsingle' # none, sum, concat, film, gated, moe, co_att, merge_attn, coattnfusion, coattentionsingle, crossattentionsingle, crossattentionseq
+fusion_method = 'concat' # none, sum, concat, film, gated, moe, co_att, merge_attn, coattnfusion, coattentionsingle, crossattentionsingle, crossattentionseq, coattentionseq
 text_ckpt_path = None #'./pretrain/epoch-44.pt'
 image_ckpt_path = None
 video_ckpt_path = None #'./pretrain/epoch-45.pt'
 video_feature_path = '~/dataset/MicroLens-100k-Dataset/MicroLens-100k_frames_interval_1_number_5_encoder2.lmdb' # to input, if using pre-extracted video features
 text_feature_path = None #'~/dataset/MicroLens-100k-Dataset/MicroLens-100k_title_en_encoder2.pt' # to input, if using pre-extracted text features
+use_text_video_contrastive = 0
+text_video_lambda = 0.2
+text_video_tau = 0.07
+use_text_video_item_contrastive = 1
+text_video_item_lambda = 0.1
+text_video_item_tau = 0.07
 
 for batch_size in batch_size_list:
     for embedding_dim in embedding_dim_list:
@@ -93,7 +99,9 @@ for batch_size in batch_size_list:
                         --scheduler {} --scheduler_gap {} --scheduler_alpha {} --max_video_no {}\
                         --version {} \
                         --num_workers {} --fusion_method {} \
-                        --text_ckpt_path {} --image_ckpt_path {} --video_ckpt_path {} --video_feature_path {} --text_feature_path {}".format(
+                        --text_ckpt_path {} --image_ckpt_path {} --video_ckpt_path {} --video_feature_path {} --text_feature_path {} \
+                        --use_text_video_contrastive {} --text_video_lambda {} --text_video_tau {} \
+                        --use_text_video_item_contrastive {} --text_video_item_lambda {} --text_video_item_tau {}".format(
                         root_data_dir, root_model_dir, dataset, behaviors, text_data, image_data, video_data,
                         mode, item_tower, load_ckpt_name, label_screen, logging_num, save_step,
                         testing_num,weight_decay, drop_rate, batch_size, lr, embedding_dim,
@@ -102,6 +110,8 @@ for batch_size in batch_size_list:
                         text_fine_tune_lr, image_fine_tune_lr, video_fine_tune_lr, 
                         scheduler, scheduler_gap, scheduler_alpha, max_video_no,
                         version, num_workers, fusion_method, 
-                        text_ckpt_path, image_ckpt_path, video_ckpt_path, video_feature_path, text_feature_path)
+                        text_ckpt_path, image_ckpt_path, video_ckpt_path, video_feature_path, text_feature_path,
+                        use_text_video_contrastive, text_video_lambda, text_video_tau,
+                        use_text_video_item_contrastive, text_video_item_lambda, text_video_item_tau)
             
                 os.system(run_py)

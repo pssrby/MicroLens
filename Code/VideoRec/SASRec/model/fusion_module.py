@@ -231,6 +231,111 @@ class CrossAttentionSeq(nn.Module):
         fused_vec = fused_tokens.sum(dim=1) / denom
         return fused_vec
 
+
+class CoAttentionSeq(nn.Module):
+    def __init__(self, args, num_heads=8, dropout=0.1):
+        super(CoAttentionSeq, self).__init__()
+        self.embedding_dim = args.embedding_dim
+        if self.embedding_dim % num_heads != 0:
+            raise ValueError(
+                f"embedding_dim ({self.embedding_dim}) must be divisible by num_heads ({num_heads})"
+            )
+
+        self.token_type_embeddings = nn.Embedding(2, self.embedding_dim)
+        self.text_to_video_attn = nn.MultiheadAttention(
+            embed_dim=self.embedding_dim,
+            num_heads=num_heads,
+            dropout=dropout,
+            batch_first=True,
+        )
+        self.video_to_text_attn = nn.MultiheadAttention(
+            embed_dim=self.embedding_dim,
+            num_heads=num_heads,
+            dropout=dropout,
+            batch_first=True,
+        )
+
+        self.text_norm1 = nn.LayerNorm(self.embedding_dim)
+        self.video_norm1 = nn.LayerNorm(self.embedding_dim)
+        self.text_norm2 = nn.LayerNorm(self.embedding_dim)
+        self.video_norm2 = nn.LayerNorm(self.embedding_dim)
+
+        self.text_ffn = nn.Sequential(
+            nn.Linear(self.embedding_dim, self.embedding_dim * 4),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(self.embedding_dim * 4, self.embedding_dim),
+        )
+        self.video_ffn = nn.Sequential(
+            nn.Linear(self.embedding_dim, self.embedding_dim * 4),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(self.embedding_dim * 4, self.embedding_dim),
+        )
+
+        self.fuse_proj = nn.Sequential(
+            nn.Linear(self.embedding_dim * 2, self.embedding_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(self.embedding_dim, self.embedding_dim),
+        )
+
+    def forward(self, text_seq, text_mask, video_vec):
+        if text_seq.dim() != 3:
+            raise ValueError(f"text_seq must be [B, L, D], got {text_seq.shape}")
+        if text_mask.dim() == 3 and text_mask.size(-1) == 1:
+            text_mask = text_mask.squeeze(-1)
+        if text_mask.dim() != 2:
+            raise ValueError(f"text_mask must be [B, L], got {text_mask.shape}")
+        if video_vec.dim() != 2:
+            raise ValueError(f"video_vec must be [B, D], got {video_vec.shape}")
+        if text_seq.size(0) != video_vec.size(0) or text_seq.size(2) != video_vec.size(1):
+            raise ValueError(
+                f"text_seq and video_vec size mismatch: {text_seq.shape} vs {video_vec.shape}"
+            )
+
+        batch_size, seq_len, _ = text_seq.shape
+        device = text_seq.device
+        text_mask = text_mask.long()
+
+        text_seq = text_seq + self.token_type_embeddings(
+            torch.zeros(batch_size, seq_len, dtype=torch.long, device=device)
+        )
+        video_seq = video_vec.unsqueeze(1) + self.token_type_embeddings(
+            torch.ones(batch_size, 1, dtype=torch.long, device=device)
+        )
+
+        text_attn_out, _ = self.text_to_video_attn(
+            query=text_seq,
+            key=video_seq,
+            value=video_seq,
+            need_weights=False,
+        )
+        video_attn_out, _ = self.video_to_text_attn(
+            query=video_seq,
+            key=text_seq,
+            value=text_seq,
+            key_padding_mask=text_mask == 0,
+            need_weights=False,
+        )
+
+        text_attn_out = torch.nan_to_num(text_attn_out, nan=0.0, posinf=0.0, neginf=0.0)
+        video_attn_out = torch.nan_to_num(video_attn_out, nan=0.0, posinf=0.0, neginf=0.0)
+
+        text_seq = self.text_norm1(text_seq + text_attn_out)
+        text_seq = text_seq * text_mask.unsqueeze(-1).to(text_seq.dtype)
+        text_seq = self.text_norm2(text_seq + self.text_ffn(text_seq))
+        text_seq = text_seq * text_mask.unsqueeze(-1).to(text_seq.dtype)
+
+        video_seq = self.video_norm1(video_seq + video_attn_out)
+        video_seq = self.video_norm2(video_seq + self.video_ffn(video_seq))
+
+        denom = text_mask.sum(dim=1, keepdim=True).clamp_min(1).to(text_seq.dtype)
+        text_vec = text_seq.sum(dim=1) / denom
+        video_vec = video_seq.squeeze(1)
+        fused_vec = self.fuse_proj(torch.cat([text_vec, video_vec], dim=-1))
+        return fused_vec
+
 class MoEFusion(nn.Module):
     """Mixture-of-Experts fusion for two or three modalities.
 

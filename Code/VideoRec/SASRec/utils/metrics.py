@@ -47,6 +47,21 @@ def metrics_topK(y_score, y_true, item_rank, topK, local_rank):
         eval_ra[1] = 1 / math.log2(rank + 1)
     return rank, eval_ra
 
+
+def metrics_topk_full(y_score, y_true, item_rank, topk_list, local_rank):
+    order = torch.argsort(y_score, descending=True)
+    y_true = torch.take(y_true, order)
+    rank = torch.sum(y_true * item_rank)
+    eval_ra = torch.zeros(len(topk_list) * 2 + 1).to(local_rank)
+
+    for idx, topk in enumerate(topk_list):
+        if rank <= topk:
+            eval_ra[idx] = 1
+            eval_ra[len(topk_list) + idx] = 1 / math.log2(rank + 1)
+
+    eval_ra[-1] = 1 / rank
+    return rank, eval_ra
+
 def get_item_id_score(model, item_num, test_batch_size, args, local_rank):
     model.eval()
     item_dataset = IdEvalDataset(data=np.arange(item_num + 1))
@@ -165,9 +180,9 @@ def get_fusion_score(model, item_scoring_text, item_scoring_image, item_scoring_
                 video_feats = item_scoring_video.unsqueeze(1)
                 item_mask = torch.ones(text_feats.size(0), 1, device=local_rank, dtype=torch.long)
                 item_scoring = model.module.fusion_module(text_feats, item_mask, video_feats, item_mask).squeeze(1)
-            elif args.fusion_method.lower() == 'crossattentionseq':
+            elif args.fusion_method.lower() in ('crossattentionseq', 'coattentionseq'):
                 if item_scoring_text.dim() != 3:
-                    raise ValueError('crossAttentionSeq expects item_scoring_text to be a token sequence tensor [N, L, D].')
+                    raise ValueError('sequence attention fusion expects item_scoring_text to be a token sequence tensor [N, L, D].')
                 text_mask = item_scoring_text.abs().sum(dim=-1).ne(0).long()
                 item_scoring = model.module.fusion_module(item_scoring_text, text_mask, item_scoring_video)
             elif args.fusion_method.lower() in ('coattentionsingle', 'crossattentionsingle'):
@@ -187,8 +202,9 @@ def eval_model(model, user_history, eval_seq, item_scoring, test_batch_size, arg
     eval_dl = DataLoader(eval_dataset, batch_size=test_batch_size,
                          num_workers=args.num_workers, pin_memory=True, sampler=test_sampler)
     model.eval()
-    topK = 10
-    Log_file.info(v_or_t + '_methods   {}'.format('\t'.join(['Hit{}'.format(topK), 'nDCG{}'.format(topK)])))
+    topk_list = [5, 10, 20]
+    metric_names = [f'Hit{k}' for k in topk_list] + [f'nDCG{k}' for k in topk_list] + ['MRR']
+    Log_file.info(v_or_t + '_methods   {}'.format('\t'.join(metric_names)))
     item_scoring = item_scoring.to(local_rank)
     with torch.no_grad():
         eval_all_user = []
@@ -211,14 +227,14 @@ def eval_model(model, user_history, eval_seq, item_scoring, test_batch_size, arg
                 history = user_history[user_id].to(local_rank)
                 score[history] = -np.inf
                 score = score[1:]
-                rank, res = metrics_topK(score, label, item_rank, topK, local_rank)
+                rank, res = metrics_topk_full(score, label, item_rank, topk_list, local_rank)
                 rank_list.append(rank.detach().cpu())
                 user_list.append(user_id)   
                 item_list.append(pop_prob_list[eval_seq[user_id][-1]])
                 eval_all_user.append(res)
         eval_all_user = torch.stack(tensors=eval_all_user, dim=0).t().contiguous()
-        Hit10, nDCG10 = eval_all_user
-        mean_eval = eval_concat([Hit10, nDCG10], test_sampler)
+        metric_tensors = [metric for metric in eval_all_user]
+        mean_eval = eval_concat(metric_tensors, test_sampler)
         dataset = 'ks'
         mode = args.item_tower
         # np.save('./results/{}/{}/rank_list_{}.npy'.format(dataset, mode, epoch-1), np.array(rank_list))
@@ -226,4 +242,4 @@ def eval_model(model, user_history, eval_seq, item_scoring, test_batch_size, arg
         # np.save('./results/{}/{}/item_list_{}.npy'.format(dataset, mode, epoch-1), np.array(item_list))
         # savetxt('./embeddings/embeddings-{}.csv'.format(mean_eval[0] * 100), item_scoring.to(torch.device('cpu')).detach(), delimiter=',')
         print_metrics(mean_eval, Log_file, v_or_t)
-    return mean_eval[0], mean_eval[1]
+    return mean_eval[1], mean_eval[4]

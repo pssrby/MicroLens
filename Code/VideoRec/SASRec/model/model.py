@@ -16,7 +16,7 @@ from .video_encoders import X3DLEncoder, MVIT16Encoder, MVIT16X4Encoder, MVIT32X
 from .video_encoders import SLOWFAST50Encoder, SLOWFAST16X8101Encoder
 from .video_encoders import VideoFeatureEncoder
 from .image_encoders import VitEncoder, ResnetEncoder, MaeEncoder, SwinEncoder 
-from .fusion_module import MoEFusion, SumFusion, ConcatFusion, FiLM, GatedFusion, CoAttnFusion, CoAttentionSingle, CrossAttentionSingle, CrossAttentionSeq 
+from .fusion_module import MoEFusion, SumFusion, ConcatFusion, FiLM, GatedFusion, CoAttnFusion, CoAttentionSingle, CrossAttentionSingle, CrossAttentionSeq, CoAttentionSeq 
 from .user_encoders import User_Encoder_GRU4Rec, User_Encoder_SASRec, User_Encoder_NextItNet
 
 class Model(torch.nn.Module):
@@ -99,6 +99,7 @@ class Model(torch.nn.Module):
         xavier_normal_(self.id_encoder.weight.data)
 
         self.criterion = nn.CrossEntropyLoss()
+        self.contrastive_criterion = nn.CrossEntropyLoss()
 
         fusion = args.fusion_method.lower()
         if fusion == 'concat' and args.item_tower in ('modal', 'text_image', 'text_video', 'text'):
@@ -124,6 +125,8 @@ class Model(torch.nn.Module):
             self.fusion_module = CrossAttentionSingle(args=args)
         elif fusion == 'crossattentionseq':
             self.fusion_module = CrossAttentionSeq(args=args)
+        elif fusion == 'coattentionseq':
+            self.fusion_module = CoAttentionSeq(args=args)
         else:
             # fallback to concat for modal as default, or no fusion for single modality.
             if args.item_tower in ('modal', 'text_image', 'text_video', 'text'):
@@ -137,11 +140,66 @@ class Model(torch.nn.Module):
         x = F.normalize(x, dim=-1)
         return torch.pdist(x, p=2).pow(2).mul(-2).exp().mean().log()
 
+    def text_video_contrastive_loss(self, text_embs, video_embs):
+        if text_embs is None or video_embs is None:
+            return None
+        if text_embs.size(0) == 0 or video_embs.size(0) == 0:
+            return None
+
+        text_embs = F.normalize(text_embs, dim=-1)
+        video_embs = F.normalize(video_embs, dim=-1)
+        logits = torch.matmul(text_embs, video_embs.t()) / self.args.text_video_tau
+        labels = torch.arange(logits.size(0), device=logits.device)
+        loss_t2v = self.contrastive_criterion(logits, labels)
+        loss_v2t = self.contrastive_criterion(logits.t(), labels)
+        return 0.5 * (loss_t2v + loss_v2t)
+
+    def text_video_item_contrastive_loss(self, item_ids, text_embs, video_embs):
+        if item_ids is None or text_embs is None or video_embs is None:
+            return None
+        if item_ids.numel() == 0:
+            return None
+        if item_ids.dim() != 1:
+            item_ids = item_ids.view(-1)
+
+        valid = item_ids.ne(0)
+        if valid.sum().item() < 2:
+            return text_embs.new_zeros(())
+
+        item_ids = item_ids[valid]
+        text_embs = text_embs[valid]
+        video_embs = video_embs[valid]
+
+        # Aggregate multiple occurrences of the same item within the batch
+        unique_ids, inverse = torch.unique(item_ids, sorted=True, return_inverse=True)
+        n_unique = unique_ids.size(0)
+        if n_unique < 2:
+            return text_embs.new_zeros(())
+
+        text_sum = text_embs.new_zeros((n_unique, text_embs.size(-1)))
+        video_sum = video_embs.new_zeros((n_unique, video_embs.size(-1)))
+        text_sum.index_add_(0, inverse, text_embs)
+        video_sum.index_add_(0, inverse, video_embs)
+        counts = torch.bincount(inverse, minlength=n_unique).to(text_embs.dtype).unsqueeze(1).clamp(min=1)
+        text_item = text_sum / counts
+        video_item = video_sum / counts
+
+        # Use item-specific temperature
+        text_item = F.normalize(text_item, dim=-1)
+        video_item = F.normalize(video_item, dim=-1)
+        logits = torch.matmul(text_item, video_item.t()) / self.args.text_video_item_tau
+        labels = torch.arange(n_unique, device=logits.device)
+        loss_t2v = self.contrastive_criterion(logits, labels)
+        loss_v2t = self.contrastive_criterion(logits.t(), labels)
+        return 0.5 * (loss_t2v + loss_v2t)
+
     def forward(self, sample_items_id, sample_items_text, sample_items_image, sample_items_video, log_mask, local_rank, args):
         self.pop_prob_list = self.pop_prob_list.to(local_rank)
         debias_logits = torch.log(self.pop_prob_list[sample_items_id.view(-1)])
 
         sequence_fused_embs = None
+        text_video_loss = None
+        text_video_item_loss = None
 
         if 'modal' == args.item_tower:
             if args.text_feature_path in [None, 'None', 'none', '']:
@@ -169,15 +227,21 @@ class Model(torch.nn.Module):
         elif 'text_video' == args.item_tower:
             text_seq = None
             text_seq_mask = None
+            input_all_text = None
             if args.text_feature_path in [None, 'None', 'none', '']:
-                if args.fusion_method.lower() == 'crossattentionseq':
+                if args.fusion_method.lower() in ('crossattentionseq', 'coattentionseq'):
                     input_all_text, text_seq_mask = self.text_encoder.forward_sequence(sample_items_text.long())
                     text_seq = input_all_text
+                    text_lengths = text_seq_mask.sum(dim=1, keepdim=True).clamp(min=1)
+                    text_pooled_for_cl = (text_seq * text_seq_mask.unsqueeze(-1)).sum(dim=1) / text_lengths
                 else:
                     input_all_text = self.text_encoder(sample_items_text.long())
+                    text_pooled_for_cl = input_all_text
             else:
                 input_all_text = self.text_encoder(sample_items_text)
+                text_pooled_for_cl = input_all_text
             input_all_video = self.video_encoder(sample_items_video)
+            video_pooled_for_cl = input_all_video
             if args.fusion_method.lower() in ('co_att', 'merge_attn'):
                 text_feats = input_all_text.unsqueeze(1) if input_all_text.dim() == 2 else input_all_text
                 video_feats = input_all_video.unsqueeze(1) if input_all_video.dim() == 2 else input_all_video
@@ -190,14 +254,28 @@ class Model(torch.nn.Module):
                 item_mask = sample_items_id.view(batch_size, self.max_seq_len + 1).ne(0).long()
                 sequence_fused_embs = self.fusion_module(text_seq, item_mask, video_seq, item_mask)
                 score_embs = sequence_fused_embs.view(-1, self.args.embedding_dim)
-            elif args.fusion_method.lower() == 'crossattentionseq':
+            elif args.fusion_method.lower() in ('crossattentionseq', 'coattentionseq'):
                 if text_seq is None or text_seq_mask is None:
-                    raise ValueError('crossAttentionSeq requires online text encoder features, not precomputed text features.')
+                    raise ValueError('sequence attention fusion requires online text encoder features, not precomputed text features.')
                 score_embs = self.fusion_module(text_seq, text_seq_mask, input_all_video)
             elif args.fusion_method.lower() in ('coattentionsingle', 'crossattentionsingle'):
                 score_embs = self.fusion_module(input_all_text, input_all_video)
             else:
                 score_embs = self.fusion_module(input_all_text, input_all_video)
+
+            if args.use_text_video_contrastive and args.text_video_lambda > 0:
+                valid_mask = sample_items_id.view(-1).ne(0)
+                text_video_loss = self.text_video_contrastive_loss(
+                    text_pooled_for_cl[valid_mask],
+                    video_pooled_for_cl[valid_mask]
+                )
+
+            if args.use_text_video_item_contrastive and args.text_video_item_lambda > 0:
+                text_video_item_loss = self.text_video_item_contrastive_loss(
+                    sample_items_id.view(-1),
+                    text_pooled_for_cl,
+                    video_pooled_for_cl,
+                )
         elif 'text' == args.item_tower:
             ## TO MAKE text+id
             # input_all_text = self.text_encoder(sample_items_text.long())
@@ -255,7 +333,17 @@ class Model(torch.nn.Module):
         logits[unused_item_mask] = -1e4
         indices = torch.where(log_mask.view(-1) != 0)
         logits = logits.view(bs * seq_len, -1)
-        loss = self.criterion(logits[indices], label[indices])
+        rec_loss = self.criterion(logits[indices], label[indices])
+        loss = rec_loss
+        if text_video_loss is not None:
+            loss = loss + self.args.text_video_lambda * text_video_loss
+        else:
+            text_video_loss = loss.new_zeros(())
+
+        if text_video_item_loss is not None:
+            loss = loss + self.args.text_video_item_lambda * text_video_item_loss
+        else:
+            text_video_item_loss = loss.new_zeros(())
 
         ###################################### CALCULATE ALIGNMENT AND UNIFORMITY ######################################
         user = prec_vec.view(-1, self.max_seq_len, self.args.embedding_dim)[:, -1, :]
@@ -263,4 +351,11 @@ class Model(torch.nn.Module):
         align = self.alignment(user, item)
         uniform = (self.uniformity(user) + self.uniformity(item)) / 2
         
-        return loss, align, uniform
+        return (
+            loss,
+            align,
+            uniform,
+            rec_loss.detach(),
+            text_video_loss.detach(),
+            text_video_item_loss.detach(),
+        )

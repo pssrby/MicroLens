@@ -569,6 +569,7 @@ def train(args, model_dir, Log_file, Log_screen, start_time, local_rank):
         train_dl.sampler.set_epoch(now_epoch)
         loss, batch_index, need_break = 0.0, 1, False
         align, uniform = 0.0, 0.0
+        rec_loss, text_video_loss, text_video_item_loss = 0.0, 0.0, 0.0
         
         if not need_break and (now_epoch-1) % 1 == 0 and now_epoch > 1:
             max_eval_value, max_epoch, early_stop_epoch, early_stop_count, need_break = \
@@ -658,10 +659,13 @@ def train(args, model_dir, Log_file, Log_screen, start_time, local_rank):
 
             # Mixed accuracy (acceleration)
             with autocast(enabled=True):
-                bz_loss, bz_align, bz_uniform = model(sample_items_id, sample_items_text, sample_items_image, sample_items_video, log_mask, local_rank, args)
+                bz_loss, bz_align, bz_uniform, bz_rec_loss, bz_text_video_loss, bz_text_video_item_loss = model(sample_items_id, sample_items_text, sample_items_image, sample_items_video, log_mask, local_rank, args)
                 loss += bz_loss.data.float()
                 align += bz_align.data.float()
                 uniform += bz_uniform.data.float()
+                rec_loss += bz_rec_loss.data.float()
+                text_video_loss += bz_text_video_loss.data.float()
+                text_video_item_loss += bz_text_video_item_loss.data.float()
 
             scaler.scale(bz_loss).backward()
             scaler.unscale_(optimizer)
@@ -675,8 +679,8 @@ def train(args, model_dir, Log_file, Log_screen, start_time, local_rank):
 
             # steps_for_log = 1
             if batch_index % steps_for_log == 0:
-                Log_file.info('Ed: {}, batch loss: {:.3f}, sum loss: {:.3f}, align: {:.3f}, uniform: {:.3f}'.format(
-                    batch_index * args.batch_size, loss.data / batch_index, loss.data, align / batch_index, uniform / batch_index))
+                Log_file.info('Ed: {}, batch loss: {:.3f}, rec loss: {:.3f}, tv loss: {:.3f}, tv_item loss: {:.3f}, sum loss: {:.3f}, align: {:.3f}, uniform: {:.3f}'.format(
+                    batch_index * args.batch_size, loss.data / batch_index, rec_loss / batch_index, text_video_loss / batch_index, text_video_item_loss / batch_index, loss.data, align / batch_index, uniform / batch_index))
             batch_index += 1
 
         if dist.get_rank() == 0 and now_epoch % args.save_step == 0:
@@ -737,7 +741,7 @@ def eval(now_epoch, max_epoch, early_stop_epoch, max_eval_value, early_stop_coun
 
     elif 'text_video' == args.item_tower:
         Log_file.info('get_text_scoring...')
-        if args.fusion_method.lower() == 'crossattentionseq':
+        if args.fusion_method.lower() in ('crossattentionseq', 'coattentionseq'):
             item_scoring_text = get_item_text_score_sequence(model, item_content, batch_size, args, local_rank)
         else:
             item_scoring_text = get_item_text_score(model, item_content, batch_size, args, local_rank)
