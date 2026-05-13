@@ -38,12 +38,12 @@ image_freeze_paras_before = 9999 #164
 video_freeze_paras_before = 9999 #270
 
 mode = 'test' # train test
-item_tower = 'text_video' # modal, text, image, video, id, text_image, text_video
+item_tower = 'video' # modal, text, image, video, id, text_image, text_video
 
 epoch = 50
 load_ckpt_name = 'None'
 # load_ckpt_name = 'epoch-200.pt'
-load_ckpt_name = 'epoch-25.pt'
+load_ckpt_name = 'epoch-15.pt'
 
 weight_decay = 0.1
 drop_rate = 0.1
@@ -59,9 +59,10 @@ index_list = [0]
 scheduler = 'step_schedule_with_warmup'
 scheduler_gap = 1
 scheduler_alpha = 1
-version = 'v1concat' # for recording different fusion methods, to be added in the futurek
+version = 'v4' # for recording different fusion methods, to be added in the futurek
+#1:pos 2:item 3:pos+item 4:seq
 num_workers = 4
-fusion_method = 'concat' # none, sum, concat, film, gated, moe, co_att, merge_attn, coattnfusion, coattentionsingle, crossattentionsingle, crossattentionseq, coattentionseq
+fusion_method = 'coattentionsingle' # none, sum, concat, film, gated, moe, co_att, merge_attn, coattnfusion, coattentionsingle, crossattentionsingle, crossattentionseq, coattentionseq
 text_ckpt_path = None #'./pretrain/epoch-44.pt'
 image_ckpt_path = None
 video_ckpt_path = None #'./pretrain/epoch-45.pt'
@@ -73,6 +74,9 @@ text_video_tau = 0.07
 use_text_video_item_contrastive = 1
 text_video_item_lambda = 0.1
 text_video_item_tau = 0.07
+use_text_video_seq_contrastive = 0
+text_video_seq_lambda = 0.1
+text_video_seq_tau = 0.07
 
 for batch_size in batch_size_list:
     for embedding_dim in embedding_dim_list:
@@ -101,7 +105,8 @@ for batch_size in batch_size_list:
                         --num_workers {} --fusion_method {} \
                         --text_ckpt_path {} --image_ckpt_path {} --video_ckpt_path {} --video_feature_path {} --text_feature_path {} \
                         --use_text_video_contrastive {} --text_video_lambda {} --text_video_tau {} \
-                        --use_text_video_item_contrastive {} --text_video_item_lambda {} --text_video_item_tau {}".format(
+                        --use_text_video_item_contrastive {} --text_video_item_lambda {} --text_video_item_tau {} \
+                        --use_text_video_seq_contrastive {} --text_video_seq_lambda {} --text_video_seq_tau {}".format(
                         root_data_dir, root_model_dir, dataset, behaviors, text_data, image_data, video_data,
                         mode, item_tower, load_ckpt_name, label_screen, logging_num, save_step,
                         testing_num,weight_decay, drop_rate, batch_size, lr, embedding_dim,
@@ -112,6 +117,7 @@ for batch_size in batch_size_list:
                         version, num_workers, fusion_method, 
                         text_ckpt_path, image_ckpt_path, video_ckpt_path, video_feature_path, text_feature_path,
                         use_text_video_contrastive, text_video_lambda, text_video_tau,
-                        use_text_video_item_contrastive, text_video_item_lambda, text_video_item_tau)
+                        use_text_video_item_contrastive, text_video_item_lambda, text_video_item_tau,
+                        use_text_video_seq_contrastive, text_video_seq_lambda, text_video_seq_tau)
             
                 os.system(run_py)

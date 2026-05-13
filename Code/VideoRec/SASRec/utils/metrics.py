@@ -52,14 +52,13 @@ def metrics_topk_full(y_score, y_true, item_rank, topk_list, local_rank):
     order = torch.argsort(y_score, descending=True)
     y_true = torch.take(y_true, order)
     rank = torch.sum(y_true * item_rank)
-    eval_ra = torch.zeros(len(topk_list) * 2 + 1).to(local_rank)
+    eval_ra = torch.zeros(len(topk_list) * 3).to(local_rank)
 
     for idx, topk in enumerate(topk_list):
         if rank <= topk:
             eval_ra[idx] = 1
             eval_ra[len(topk_list) + idx] = 1 / math.log2(rank + 1)
-
-    eval_ra[-1] = 1 / rank
+            eval_ra[len(topk_list) * 2 + idx] = 1 / rank
     return rank, eval_ra
 
 def get_item_id_score(model, item_num, test_batch_size, args, local_rank):
@@ -203,7 +202,7 @@ def eval_model(model, user_history, eval_seq, item_scoring, test_batch_size, arg
                          num_workers=args.num_workers, pin_memory=True, sampler=test_sampler)
     model.eval()
     topk_list = [5, 10, 20]
-    metric_names = [f'Hit{k}' for k in topk_list] + [f'nDCG{k}' for k in topk_list] + ['MRR']
+    metric_names = [f'Hit{k}' for k in topk_list] + [f'nDCG{k}' for k in topk_list] + [f'MRR{k}' for k in topk_list]
     Log_file.info(v_or_t + '_methods   {}'.format('\t'.join(metric_names)))
     item_scoring = item_scoring.to(local_rank)
     with torch.no_grad():

@@ -93,6 +93,9 @@ def parse_args():
     parser.add_argument('--use_text_video_item_contrastive', type=int, default=0, choices=[0, 1])
     parser.add_argument('--text_video_item_lambda', type=float, default=0.0)
     parser.add_argument('--text_video_item_tau', type=float, default=0.07)
+    parser.add_argument('--use_text_video_seq_contrastive', type=int, default=0, choices=[0, 1])
+    parser.add_argument('--text_video_seq_lambda', type=float, default=0.0)
+    parser.add_argument('--text_video_seq_tau', type=float, default=0.07)
 
     args = parser.parse_args()
 
