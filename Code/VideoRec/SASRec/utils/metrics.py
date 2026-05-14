@@ -10,6 +10,13 @@ from .dataset import  EvalDataset, SequentialDistributedSampler, LmdbEvalDataset
 
 
 def item_collate_fn(arr):
+    if len(arr) == 0:
+        return torch.LongTensor([])
+
+    first = arr[0]
+    if isinstance(first, torch.Tensor):
+        return torch.stack([x.long() for x in arr], dim=0)
+
     arr = torch.LongTensor(np.array(arr))
     return arr
 

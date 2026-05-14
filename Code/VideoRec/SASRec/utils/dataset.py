@@ -357,7 +357,7 @@ class IdDataset(Dataset):
         return len(self.u2seq)
 
     def __getitem__(self, user_id):
-        seq = self.u2seq[user_id]
+        seq = self.u2seq[user_id][-self.max_seq_len:]
         seq_Len = len(seq)
         tokens_Len = seq_Len - 1
         mask_len_head = self.max_seq_len - seq_Len
@@ -367,6 +367,80 @@ class IdDataset(Dataset):
         sample_items = torch.LongTensor(np.array(sample_items))
 
         return sample_items, torch.FloatTensor(log_mask)
+
+class IdClDataset(Dataset):
+    def __init__(self, u2seq, item_num, max_seq_len, args):
+        self.u2seq = u2seq
+        self.item_num = item_num
+        self.max_seq_len = max_seq_len + 1
+        self.args = args
+        self.aug_min_seq_len = max(1, getattr(args, 'cl_aug_min_seq_len', 1))
+        self.crop_ratio = float(getattr(args, 'cl_crop_ratio', 0.8))
+        self.mask_ratio = float(getattr(args, 'cl_mask_ratio', 0.2))
+        self.reorder_ratio = float(getattr(args, 'cl_reorder_ratio', 0.2))
+
+    def __len__(self):
+        return len(self.u2seq)
+
+    def _pad_and_mask(self, seq):
+        seq = seq[-self.max_seq_len:]
+        seq_len = len(seq)
+        tokens_len = max(seq_len - 1, 0)
+        mask_len_head = self.max_seq_len - seq_len
+        log_mask = [0] * mask_len_head + [1] * tokens_len
+        sample_items = [0] * mask_len_head + seq
+        return torch.LongTensor(np.array(sample_items)), torch.FloatTensor(log_mask)
+
+    def _item_crop(self, seq):
+        if len(seq) <= 2:
+            return seq
+        target_len = max(self.aug_min_seq_len, int(round((len(seq) - 1) * self.crop_ratio)))
+        target_len = min(target_len, len(seq) - 1)
+        if target_len <= 0:
+            return seq
+        start = random.randint(0, len(seq) - 1 - target_len)
+        cropped_tokens = seq[start:start + target_len]
+        return cropped_tokens + [seq[-1]]
+
+    def _item_mask(self, seq):
+        if len(seq) <= 2:
+            return seq
+        augmented = list(seq)
+        candidate_indices = list(range(len(seq) - 1))
+        n_mask = max(1, int(round(len(candidate_indices) * self.mask_ratio)))
+        n_mask = min(n_mask, len(candidate_indices))
+        for idx in random.sample(candidate_indices, k=n_mask):
+            augmented[idx] = 0
+        return augmented
+
+    def _item_reorder(self, seq):
+        if len(seq) <= 3:
+            return seq
+        augmented = list(seq)
+        reorder_len = max(2, int(round((len(seq) - 1) * self.reorder_ratio)))
+        reorder_len = min(reorder_len, len(seq) - 1)
+        start = random.randint(0, len(seq) - 1 - reorder_len)
+        sub_seq = augmented[start:start + reorder_len]
+        random.shuffle(sub_seq)
+        augmented[start:start + reorder_len] = sub_seq
+        return augmented
+
+    def _augment(self, seq):
+        aug_ops = [self._item_crop, self._item_mask, self._item_reorder]
+        aug_op = random.choice(aug_ops)
+        augmented = aug_op(list(seq))
+        if len(augmented) < 2:
+            return list(seq)
+        return augmented
+
+    def __getitem__(self, user_id):
+        seq = self.u2seq[user_id][-self.max_seq_len:]
+        original_items, original_mask = self._pad_and_mask(seq)
+        aug_seq_1 = self._augment(seq)
+        aug_seq_2 = self._augment(seq)
+        aug_items_1, aug_mask_1 = self._pad_and_mask(aug_seq_1)
+        aug_items_2, aug_mask_2 = self._pad_and_mask(aug_seq_2)
+        return original_items, aug_items_1, aug_items_2, original_mask, aug_mask_1, aug_mask_2
 
 class IdEvalDataset(Dataset):
     def __init__(self, data):
@@ -389,7 +463,7 @@ class EvalDataset(Dataset):
         return len(self.u2seq)
 
     def __getitem__(self, user_id):
-        seq = self.u2seq[user_id]
+        seq = self.u2seq[user_id][-self.max_seq_len:]
         tokens = seq[:-1]
         target = seq[-1]
         mask_len = self.max_seq_len - len(seq)

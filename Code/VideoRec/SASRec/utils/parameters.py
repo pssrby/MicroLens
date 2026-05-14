@@ -96,6 +96,13 @@ def parse_args():
     parser.add_argument('--use_text_video_seq_contrastive', type=int, default=0, choices=[0, 1])
     parser.add_argument('--text_video_seq_lambda', type=float, default=0.0)
     parser.add_argument('--text_video_seq_tau', type=float, default=0.07)
+    parser.add_argument('--cl_crop_ratio', type=float, default=0.8)
+    parser.add_argument('--cl_mask_ratio', type=float, default=0.2)
+    parser.add_argument('--cl_reorder_ratio', type=float, default=0.2)
+    parser.add_argument('--cl_aug_min_seq_len', type=int, default=1)
+    parser.add_argument('--use_id_seq_contrastive', type=int, default=1, choices=[0, 1])
+    parser.add_argument('--id_seq_cl_lambda', type=float, default=1)
+    parser.add_argument('--id_seq_cl_tau', type=float, default=0.07)
 
     args = parser.parse_args()
 

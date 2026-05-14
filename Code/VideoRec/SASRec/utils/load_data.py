@@ -53,18 +53,18 @@ def read_videos(min_video_no, max_video_no):
 
 def read_behaviors(before_item_id_to_keys, before_item_name_to_id, Log_file, args):
     behaviors_path = os.path.join(args.root_data_dir, args.dataset, args.behaviors)
-    max_seq_len, min_seq_len = args.max_seq_len, args.min_seq_len
+    min_seq_len = args.min_seq_len
 
     Log_file.info('##### item number {}'.format(len(before_item_id_to_keys)))
-    Log_file.info('##### min seq len {}, max seq len {}#####'.format(min_seq_len, max_seq_len))
+    Log_file.info('##### min seq len {}#####'.format(min_seq_len))
 
-    before_item_num = len(before_item_name_to_id)
+    before_item_num = max(before_item_id_to_keys.keys()) if before_item_id_to_keys else 0
     before_item_counts = [0] * (before_item_num + 1)
     user_seq_dic = {}
     seq_num = 0
     before_seq_num = 0
     pairs_num = 0
-    Log_file.info('rebuild user seqs...')
+    Log_file.info('read user seqs and collect used item ids...')
     with open(behaviors_path, 'r') as f:
         for line in f:
             before_seq_num += 1
@@ -73,8 +73,9 @@ def read_behaviors(before_item_id_to_keys, before_item_name_to_id, Log_file, arg
             history_item_name = str(splited[1]).strip().split(' ')
             if len(history_item_name) < min_seq_len:
                 continue
-            history_item_name = history_item_name[-(max_seq_len+3):]
-            item_ids_sub_seq = [before_item_name_to_id[str(i)] for i in history_item_name]
+            item_ids_sub_seq = [before_item_name_to_id[str(i)] for i in history_item_name if str(i) in before_item_name_to_id]
+            if len(item_ids_sub_seq) < min_seq_len:
+                continue
             user_seq_dic[user_id] = item_ids_sub_seq
             for item_id in item_ids_sub_seq:
                 before_item_counts[item_id] += 1
@@ -84,9 +85,9 @@ def read_behaviors(before_item_id_to_keys, before_item_name_to_id, Log_file, arg
     Log_file.info("##### pairs_num {}".format(pairs_num))
     Log_file.info('##### user seqs before {}'.format(before_seq_num))
 
-    item_id = 1
     item_id_to_keys = {}
     item_id_before_to_now = {}
+    item_id = 1
     for before_item_id in range(1, before_item_num + 1):
         if before_item_counts[before_item_id] != 0:
             item_id_before_to_now[before_item_id] = item_id
@@ -94,7 +95,7 @@ def read_behaviors(before_item_id_to_keys, before_item_name_to_id, Log_file, arg
             item_id += 1
 
     item_num = len(item_id_before_to_now)
-    Log_file.info('##### items after clearing {}, {}, {}, {}#####'.format(item_num, item_id - 1, len(item_id_to_keys), len(item_id_before_to_now)))
+    Log_file.info('##### compact reindexed items {}, key count {}#####'.format(item_num, len(item_id_to_keys)))
     users_train = {}
     users_valid = {}
     users_test = {}
@@ -110,8 +111,8 @@ def read_behaviors(before_item_id_to_keys, before_item_name_to_id, Log_file, arg
         user_seq = [item_id_before_to_now[i] for i in item_seqs]
 
         train = user_seq[:-2]
-        valid = user_seq[-(max_seq_len+2):-1]
-        test = user_seq[-(max_seq_len+1):]
+        valid = user_seq[:-1]
+        test = user_seq
 
         users_train[user_id] = train
         users_valid[user_id] = valid

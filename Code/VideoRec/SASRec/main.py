@@ -33,14 +33,48 @@ from model.model import Model
 # from model.model_dnn import Model
 from utils.lr_decay import *
 from utils.parameters import parse_args
-from utils.load_data import read_texts, read_behaviors_text, read_items, read_behaviors, get_doc_input_bert, read_videos
+from utils.load_data import read_items, read_behaviors
 from utils.logging_utils import para_and_log, report_time_train, report_time_eval, save_model, setuplogger, get_time
-from utils.dataset import IdDataset, ModalDataset, TextDataset, ImageDataset, VideoDataset, LMDB_Image, LMDB_VIDEO, VideoFeatureDataset, TextFeatureDataset
+from utils.dataset import IdDataset, IdClDataset
 from utils.metrics import get_item_text_score, get_item_text_score_sequence, get_item_id_score, get_item_image_score, get_item_video_score, eval_model, get_fusion_score
 # from utils.metrics_dnn import get_item_text_score, get_item_id_score, get_item_image_score, get_item_video_score, eval_model, get_fusion_score
 
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 scaler = torch.cuda.amp.GradScaler()
+
+def compute_id_seq_cl_loss(model, sample_items_aug1, log_mask_aug1, sample_items_aug2, log_mask_aug2, local_rank, args):
+    if not args.use_id_seq_contrastive or args.id_seq_cl_lambda <= 0:
+        return sample_items_aug1.new_zeros((), dtype=torch.float32)
+
+    module = model.module if hasattr(model, 'module') else model
+
+    aug1_ids = sample_items_aug1.view(-1)
+    aug2_ids = sample_items_aug2.view(-1)
+
+    input_embs_1, _, _, _, _, _ = module.encode_item_sequence(
+        aug1_ids, None, None, None, log_mask_aug1, local_rank, args
+    )
+    input_embs_2, _, _, _, _, _ = module.encode_item_sequence(
+        aug2_ids, None, None, None, log_mask_aug2, local_rank, args
+    )
+
+    prec_vec_1 = module.encode_user_sequence(input_embs_1, log_mask_aug1, local_rank)
+    prec_vec_2 = module.encode_user_sequence(input_embs_2, log_mask_aug2, local_rank)
+
+    valid_mask = (log_mask_aug1.view(-1) > 0) & (log_mask_aug2.view(-1) > 0)
+    prec_vec_1 = prec_vec_1[valid_mask]
+    prec_vec_2 = prec_vec_2[valid_mask]
+
+    if prec_vec_1.size(0) < 2 or prec_vec_2.size(0) < 2:
+        return prec_vec_1.new_zeros(())
+
+    prec_vec_1 = torch.nn.functional.normalize(prec_vec_1, dim=-1)
+    prec_vec_2 = torch.nn.functional.normalize(prec_vec_2, dim=-1)
+    logits = torch.matmul(prec_vec_1, prec_vec_2.t()) / args.id_seq_cl_tau
+    labels = torch.arange(logits.size(0), device=logits.device)
+    loss_12 = module.contrastive_criterion(logits, labels)
+    loss_21 = module.contrastive_criterion(logits.t(), labels)
+    return 0.5 * (loss_12 + loss_21)
 
 def load_submodule_state(module, checkpoint_path, prefix, log_file):
     log_file.info(f'Loading submodule `{prefix}` from checkpoint: {checkpoint_path}')
@@ -291,60 +325,18 @@ def train(args, model_dir, Log_file, Log_screen, start_time, local_rank):
         video_model = None
 
     # ========================================== Loading Data ===========================================
-    item_content = None
     item_id_to_keys = None
 
-    if args.item_tower in ('modal', 'text', 'text_image', 'text_video'):
-        if args.text_feature_path in [None, 'None', 'none', '']:
-            Log_file.info('read texts ...')
-            item_dic_titles_after_tokenizer, before_item_name_to_index, before_item_index_to_name = read_texts(tokenizer, args)
+    Log_file.info('read item ids...')
+    before_item_id_to_keys, before_item_name_to_id = read_items(args)
 
-            Log_file.info('read behaviors ...')
-            item_num, item_dic_titles_after_tokenizer, item_name_to_index, users_train, users_valid, users_history_for_valid, pop_prob_list = \
-                read_behaviors_text(item_dic_titles_after_tokenizer, before_item_name_to_index, before_item_index_to_name, Log_file, args)
-
-            Log_file.info('combine text information...')
-            text_title, text_title_attmask = get_doc_input_bert(item_dic_titles_after_tokenizer, item_name_to_index, args)
-
-            item_content = np.concatenate([text_title, text_title_attmask], axis=1)
-        else:
-            Log_file.info('read images/videos/id...')
-            before_item_id_to_keys, before_item_name_to_id = read_items(args)
-
-            Log_file.info('read behaviors...')
-            item_num, item_id_to_keys, users_train, users_valid, users_history_for_valid, pop_prob_list = read_behaviors(before_item_id_to_keys, before_item_name_to_id, Log_file, args)
-            Log_file.info('load precomputed text features...')
-            text_feature_data = torch.load(args.text_feature_path, map_location='cpu')
-            if isinstance(text_feature_data, dict) and 'features' in text_feature_data:
-                item_content = text_feature_data['features']
-            else:
-                item_content = text_feature_data
-            if isinstance(item_content, torch.Tensor):
-                item_content = item_content.cpu().numpy()
-            reordered_item_content = np.zeros((item_num + 1, item_content.shape[1]), dtype=item_content.dtype)
-            for item_id, raw_doc_name in item_id_to_keys.items():
-                reordered_item_content[item_id] = item_content[int(raw_doc_name)]
-            item_content = reordered_item_content
-            Log_file.info(f'loaded text feature has nan: {np.isnan(item_content).any()}')
-            if np.isnan(item_content).any():
-                nan_rows = np.where(np.isnan(item_content).any(axis=1))[0]
-                Log_file.info(f'nan row count: {len(nan_rows)}')
-                Log_file.info(f'first nan rows: {nan_rows[:20].tolist()}')
-                os._exit(0)
-            args.word_embedding_dim = int(item_content.shape[1])
-            Log_file.info('precomputed text feature dim: {}'.format(args.word_embedding_dim))
-
-    if args.item_tower in ('modal', 'image', 'video', 'id', 'text_image', 'text_video'):
-        Log_file.info('read images/videos/id...')
-        before_item_id_to_keys, before_item_name_to_id = read_items(args)
-
-        Log_file.info('read behaviors...')
-        item_num, item_id_to_keys, users_train, users_valid, users_history_for_valid, pop_prob_list = \
-            read_behaviors(before_item_id_to_keys, before_item_name_to_id, Log_file, args)
+    Log_file.info('read behaviors...')
+    item_num, item_id_to_keys, users_train, users_valid, users_history_for_valid, pop_prob_list = \
+        read_behaviors(before_item_id_to_keys, before_item_name_to_id, Log_file, args)
 
     # ========================================== Building Model ===========================================
     Log_file.info('build model...')
-    model = Model(args, pop_prob_list, item_num, text_model, image_model, video_model, item_content).to(local_rank)
+    model = Model(args, pop_prob_list, item_num, text_model, image_model, video_model, tokenizer=tokenizer, item_id_to_keys=item_id_to_keys).to(local_rank)
     model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model).to(local_rank)
 
     checkpoint = None  # new
@@ -382,61 +374,11 @@ def train(args, model_dir, Log_file, Log_screen, start_time, local_rank):
     Log_file.info(model)
     # ============================ Dataset and Dataloader ============================
 
-    if args.item_tower in ('modal', 'text_image', 'text_video'):
-        Log_file.info('build modal dataset...')
-        train_dataset = ModalDataset(u2seq=users_train,
-                                    item_content=item_content,
-                                    max_seq_len=args.max_seq_len,
-                                    item_num=item_num,
-                                    text_size=args.num_words_title,
-                                    image_db_path=os.path.join(args.root_data_dir, args.dataset, args.image_data),
-                                    video_db_path=os.path.join(args.root_data_dir, args.dataset, args.video_data),
-                                    item_id_to_keys=item_id_to_keys,
-                                    resize=args.image_resize,
-                                    args=args)
-
-    elif 'image' == args.item_tower:
-        train_dataset = ImageDataset(u2seq=users_train,
-                                    item_num=item_num,
-                                    max_seq_len=args.max_seq_len,
-                                    db_path=os.path.join(args.root_data_dir, args.dataset, args.image_data),
-                                    item_id_to_keys=item_id_to_keys, 
-                                    resize=args.image_resize)
-
-    elif 'text' == args.item_tower:
-        if args.text_feature_path in [None, 'None', 'none', '']:
-            train_dataset = TextDataset(userseq=users_train, 
-                                       item_content=item_content, 
-                                       max_seq_len=args.max_seq_len,
-                                       item_num=item_num, 
-                                       text_size=args.num_words_title)
-        else:
-            train_dataset = TextFeatureDataset(userseq=users_train,
-                                              text_features=item_content,
-                                              max_seq_len=args.max_seq_len,
-                                              item_num=item_num,
-                                              item_id_to_keys=item_id_to_keys)
-
-    elif 'video' == args.item_tower:
-        if args.video_feature_path in [None, 'None', 'none', '']:
-            train_dataset = VideoDataset(u2seq=users_train,
-                                        item_num=item_num,
-                                        max_seq_len=args.max_seq_len,
-                                        db_path=os.path.join(args.root_data_dir, args.dataset, args.video_data),
-                                        item_id_to_keys=item_id_to_keys,
-                                        frame_no=args.frame_no)
-        else:
-            train_dataset = VideoFeatureDataset(u2seq=users_train,
-                                               item_num=item_num,
-                                               max_seq_len=args.max_seq_len,
-                                               item_id_to_keys=item_id_to_keys,
-                                               feature_db_path=args.video_feature_path)
-
-    elif 'id' == args.item_tower:
-        train_dataset = IdDataset(u2seq=users_train, 
-                                 item_num=item_num, 
-                                 max_seq_len=args.max_seq_len,
-                                 args=args)
+    Log_file.info('build id contrastive dataset...')
+    train_dataset = IdClDataset(u2seq=users_train,
+                                item_num=item_num,
+                                max_seq_len=args.max_seq_len,
+                                args=args)
 
     Log_file.info('build DDP sampler...')
     train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
@@ -572,12 +514,12 @@ def train(args, model_dir, Log_file, Log_screen, start_time, local_rank):
         train_dl.sampler.set_epoch(now_epoch)
         loss, batch_index, need_break = 0.0, 1, False
         align, uniform = 0.0, 0.0
-        rec_loss, text_video_loss, text_video_item_loss, text_video_seq_loss = 0.0, 0.0, 0.0, 0.0
+        rec_loss, id_seq_cl_loss, text_video_loss, text_video_item_loss, text_video_seq_loss = 0.0, 0.0, 0.0, 0.0, 0.0
         
         if not need_break and (now_epoch-1) % 1 == 0 and now_epoch > 1:
             max_eval_value, max_epoch, early_stop_epoch, early_stop_count, need_break = \
                 eval(now_epoch, max_epoch, early_stop_epoch, max_eval_value, early_stop_count, model, users_history_for_valid, \
-                    users_valid, 64, item_num, args.mode, is_early_stop, local_rank, args, pop_prob_list, Log_file, item_content, item_id_to_keys)
+                    users_valid, 64, item_num, args.mode, is_early_stop, local_rank, args, pop_prob_list, Log_file, item_id_to_keys=item_id_to_keys)
 
         if args.mode == 'test':
             return
@@ -591,82 +533,38 @@ def train(args, model_dir, Log_file, Log_screen, start_time, local_rank):
             Log_file.info('start of trainin epoch:  {} ,lr: {}'.format(now_epoch, lr_scheduler.get_lr()))
 
         for data in train_dl:
-            if args.item_tower in ('modal', 'text_image', 'text_video'):
-                sample_items_id, sample_items_text, sample_items_image, sample_items_video, log_mask = data
-                sample_items_id, sample_items_text, sample_items_image, sample_items_video, log_mask = \
-                    sample_items_id.to(local_rank), sample_items_text.to(local_rank), \
-                        sample_items_image.to(local_rank), sample_items_video.to(local_rank), log_mask.to(local_rank)
-                if args.text_feature_path in [None, 'None', 'none', '']:
-                    sample_items_text = sample_items_text.view(-1, args.num_words_title * 2)
-                else:
-                    sample_items_text = sample_items_text.view(-1, sample_items_text.size(-1))
-                sample_items_image = sample_items_image.view(-1, 3, args.image_resize, args.image_resize)
-                if args.video_feature_path in [None, 'None', 'none', '']:
-                    sample_items_video = sample_items_video.view(-1, args.frame_no, 3, 224, 224)
-                else:
-                    sample_items_video = sample_items_video.view(-1, sample_items_video.size(-1))
-                sample_items_id = sample_items_id.view(-1)
-
-            elif 'text' == args.item_tower:
-                sample_items_id, sample_items_text, log_mask = data
-# sample_items_id（LongTensor）
-# 含义：batch 里每个样本的 item id 序列（左侧 padding 后的定长序列）
-# shape：(batch_size, max_seq_len+1)
-# 里面会包含 0（padding item id）
-# sample_items_text（FloatTensor，后面会 .view(-1, args.num_words_title * 2) 再喂给 text encoder）
-# 含义：batch 里每个样本、每个位置对应的文本特征向量（= item_content[item_id]）
-# shape（解包后、还没 view 前）：(batch_size, max_seq_len+1, num_words_title*2)
-# 每个向量的结构：[input_ids (L) | attention_mask (L)]，所以长度是 2*L
-# padding 位置对应的向量是全 0（等价于 item_content[0]）
-# log_mask（FloatTensor）
-# 含义：告诉 user encoder 哪些历史位置是有效的(1) / padding(0)
-# shape：(batch_size, max_seq_len)
-# 注意它不包含最后的 target 那个位置（所以长度是 max_seq_len 而不是 max_seq_len+1）
-                sample_items_id, sample_items_text, log_mask = \
-                    sample_items_id.to(local_rank), sample_items_text.to(local_rank), log_mask.to(local_rank)
-                if args.text_feature_path in [None, 'None', 'none', '']:
-                    sample_items_text = sample_items_text.view(-1, args.num_words_title * 2)
-                else:
-                    sample_items_text = sample_items_text.view(-1, sample_items_text.size(-1))
-                sample_items_id = sample_items_id.view(-1)
-                sample_items_image = None
-                sample_items_video = None
-
-            elif 'image' == args.item_tower:
-                sample_items_id, sample_items_image, log_mask = data
-                sample_items_id, sample_items_image, log_mask = \
-                    sample_items_id.to(local_rank), sample_items_image.to(local_rank), log_mask.to(local_rank)
-                sample_items_image =  sample_items_image.view(-1, 3, args.image_resize, args.image_resize)
-                sample_items_id = sample_items_id.view(-1)
-                sample_items_text = None
-                sample_items_video = None
-
-            elif 'video' == args.item_tower:
-                sample_items_id, sample_items_video, log_mask = data
-                sample_items_id, sample_items_video, log_mask = \
-                    sample_items_id.to(local_rank), sample_items_video.to(local_rank), log_mask.to(local_rank)
-                sample_items_video =  sample_items_video.view(-1, sample_items_video.size(-1))
-                sample_items_id = sample_items_id.view(-1)
-                sample_items_text = None
-                sample_items_image = None
-
-            elif 'id' == args.item_tower:
-                sample_items, log_mask = data
-                sample_items, log_mask = sample_items.to(local_rank), log_mask.to(local_rank)
-                sample_items_id = sample_items.view(-1)
-                sample_items_text = None
-                sample_items_image = None
-                sample_items_video = None
+            sample_items, sample_items_aug1, sample_items_aug2, log_mask, log_mask_aug1, log_mask_aug2 = data
+            sample_items = sample_items.to(local_rank)
+            sample_items_aug1 = sample_items_aug1.to(local_rank)
+            sample_items_aug2 = sample_items_aug2.to(local_rank)
+            log_mask = log_mask.to(local_rank)
+            log_mask_aug1 = log_mask_aug1.to(local_rank)
+            log_mask_aug2 = log_mask_aug2.to(local_rank)
+            sample_items_id = sample_items.view(-1)
+            sample_items_text = None
+            sample_items_image = None
+            sample_items_video = None
 
             optimizer.zero_grad()
 
             # Mixed accuracy (acceleration)
             with autocast(enabled=True):
                 bz_loss, bz_align, bz_uniform, bz_rec_loss, bz_text_video_loss, bz_text_video_item_loss, bz_text_video_seq_loss = model(sample_items_id, sample_items_text, sample_items_image, sample_items_video, log_mask, local_rank, args)
+                bz_id_seq_cl_loss = compute_id_seq_cl_loss(
+                    model,
+                    sample_items_aug1,
+                    log_mask_aug1,
+                    sample_items_aug2,
+                    log_mask_aug2,
+                    local_rank,
+                    args,
+                )
+                bz_loss = bz_loss + args.id_seq_cl_lambda * bz_id_seq_cl_loss
                 loss += bz_loss.data.float()
                 align += bz_align.data.float()
                 uniform += bz_uniform.data.float()
                 rec_loss += bz_rec_loss.data.float()
+                id_seq_cl_loss += bz_id_seq_cl_loss.data.float()
                 text_video_loss += bz_text_video_loss.data.float()
                 text_video_item_loss += bz_text_video_item_loss.data.float()
                 text_video_seq_loss += bz_text_video_seq_loss.data.float()
@@ -683,8 +581,8 @@ def train(args, model_dir, Log_file, Log_screen, start_time, local_rank):
 
             # steps_for_log = 1
             if batch_index % steps_for_log == 0:
-                Log_file.info('Ed: {}, batch loss: {:.3f}, rec loss: {:.3f}, tv loss: {:.3f}, tv_item loss: {:.3f}, tv_seq loss: {:.3f}, sum loss: {:.3f}, align: {:.3f}, uniform: {:.3f}'.format(
-                    batch_index * args.batch_size, loss.data / batch_index, rec_loss / batch_index, text_video_loss / batch_index, text_video_item_loss / batch_index, text_video_seq_loss / batch_index, loss.data, align / batch_index, uniform / batch_index))
+                Log_file.info('Ed: {}, batch loss: {:.3f}, rec loss: {:.3f}, id_cl loss: {:.3f}, tv loss: {:.3f}, tv_item loss: {:.3f}, tv_seq loss: {:.3f}, sum loss: {:.3f}, align: {:.3f}, uniform: {:.3f}'.format(
+                    batch_index * args.batch_size, loss.data / batch_index, rec_loss / batch_index, id_seq_cl_loss / batch_index, text_video_loss / batch_index, text_video_item_loss / batch_index, text_video_seq_loss / batch_index, loss.data, align / batch_index, uniform / batch_index))
             batch_index += 1
 
         if dist.get_rank() == 0 and now_epoch % args.save_step == 0:
@@ -713,6 +611,10 @@ def eval(now_epoch, max_epoch, early_stop_epoch, max_eval_value, early_stop_coun
 
     eval_start_time = time.time()
     Log_file.info('Validating based on {}'.format(args.item_tower))
+    if item_content is None and 'text' in args.item_tower:
+        model_module = model.module if hasattr(model, 'module') else model
+        model_module._ensure_text_content_loaded()
+        item_content = model.module.text_content
 
     if 'text' == args.item_tower:
         Log_file.info('get_text_scoring...')

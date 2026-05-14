@@ -1,6 +1,8 @@
 import os
 import torch
 import numpy as np
+import lmdb
+import pickle
 from torch import nn
 from torch.nn.init import xavier_normal_
 from collections import Counter
@@ -20,12 +22,16 @@ from .fusion_module import MoEFusion, SumFusion, ConcatFusion, FiLM, GatedFusion
 from .user_encoders import User_Encoder_GRU4Rec, User_Encoder_SASRec, User_Encoder_NextItNet
 
 class Model(torch.nn.Module):
-    def __init__(self, args, pop_prob_list, item_num, bert_model, image_net, video_net, text_content=None):
+    def __init__(self, args, pop_prob_list, item_num, bert_model, image_net, video_net, tokenizer=None, item_id_to_keys=None):
         super(Model, self).__init__()
         self.args = args
         self.max_seq_len = args.max_seq_len
         self.item_num = item_num
         self.pop_prob_list = torch.FloatTensor(pop_prob_list)
+        self.item_id_to_keys = item_id_to_keys
+        self.tokenizer = tokenizer
+        self._image_env = None
+        self._video_env = None
 
         if args.model == 'sasrec':
             self.user_encoder = User_Encoder_SASRec(args)
@@ -48,9 +54,13 @@ class Model(torch.nn.Module):
 
         if args.item_tower in ('text', 'modal', 'text_image', 'text_video'):
             if args.text_feature_path in [None, 'None', 'none', '']:
-                self.text_content = torch.LongTensor(text_content)
+                self.text_path = os.path.join(args.root_data_dir, args.dataset, args.text_data)
+                self.text_feature_path = None
+                self.text_content = None
                 self.text_encoder = TextEmbedding(args=args, bert_model=bert_model)
             else:
+                self.text_feature_path = os.path.expanduser(args.text_feature_path)
+                self.text_path = None
                 self.text_content = None
                 self.text_encoder = TextFeatureEncoder(args=args)
         
@@ -141,6 +151,135 @@ class Model(torch.nn.Module):
             if args.item_tower in ('modal', 'text_image', 'text_video', 'text'):
                 self.fusion_module = ConcatFusion(args=args)
 
+    def _load_text_tokens_from_ids(self, args, tokenizer, item_id_to_keys, item_num):
+        if tokenizer is None:
+            raise ValueError('tokenizer is required for online text towers.')
+        if item_id_to_keys is None:
+            raise ValueError('item_id_to_keys is required to load text from item ids.')
+
+        text_content = np.zeros((item_num + 1, args.num_words_title * 2), dtype=np.int64)
+        text_path = os.path.join(args.root_data_dir, args.dataset, args.text_data)
+        key_to_id = {str(raw_key): item_id for item_id, raw_key in item_id_to_keys.items()}
+
+        with open(text_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                splited = line.strip('\n').split(',')
+                if len(splited) < 2:
+                    continue
+                doc_name, title = splited[0], str(','.join(splited[1:]))
+                if doc_name not in key_to_id:
+                    continue
+                item_id = key_to_id[doc_name]
+                tokenized_title = tokenizer(title.lower(), max_length=args.num_words_title, padding='max_length', truncation=True)
+                text_content[item_id, :args.num_words_title] = tokenized_title['input_ids']
+                text_content[item_id, args.num_words_title:] = tokenized_title['attention_mask']
+
+        return torch.LongTensor(text_content)
+
+    def _load_text_features_from_ids(self, args, item_id_to_keys, item_num):
+        if item_id_to_keys is None:
+            raise ValueError('item_id_to_keys is required to load text features from item ids.')
+
+        text_feature_data = torch.load(args.text_feature_path, map_location='cpu')
+        if isinstance(text_feature_data, dict) and 'features' in text_feature_data:
+            item_content = text_feature_data['features']
+        else:
+            item_content = text_feature_data
+        if isinstance(item_content, torch.Tensor):
+            item_content = item_content.cpu().numpy()
+
+        args.word_embedding_dim = int(item_content.shape[1])
+        reordered_item_content = np.zeros((item_num + 1, item_content.shape[1]), dtype=item_content.dtype)
+        for item_id, raw_doc_name in item_id_to_keys.items():
+            raw_index = int(raw_doc_name)
+            if 0 <= raw_index < item_content.shape[0]:
+                reordered_item_content[item_id] = item_content[raw_index]
+        if np.isnan(reordered_item_content).any():
+            raise ValueError('loaded text features contain nan values.')
+        return torch.FloatTensor(reordered_item_content)
+
+    def _ensure_text_content_loaded(self):
+        if self.text_content is not None:
+            return
+
+        if self.item_id_to_keys is None:
+            raise ValueError('item_id_to_keys is required to load text from item ids.')
+
+        if self.text_feature_path in [None, 'None', 'none', '']:
+            if self.tokenizer is None:
+                raise ValueError('tokenizer is required for online text towers.')
+            self.text_content = self._load_text_tokens_from_ids(self.args, self.tokenizer, self.item_id_to_keys, self.item_num)
+        else:
+            args = self.args
+            args.text_feature_path = self.text_feature_path
+            self.text_content = self._load_text_features_from_ids(args, self.item_id_to_keys, self.item_num)
+
+    def get_text_inputs_from_ids(self, item_ids, local_rank):
+        self._ensure_text_content_loaded()
+        return self.text_content.to(local_rank)[item_ids]
+
+    def _open_lmdb(self, db_path, cache_name):
+        env = getattr(self, cache_name)
+        if env is None:
+            env = lmdb.open(db_path, subdir=os.path.isdir(db_path), readonly=True, lock=False, readahead=False, meminit=False)
+            setattr(self, cache_name, env)
+        return env
+
+    def _load_lmdb_items(self, item_ids, db_path, cache_name, mode, local_rank):
+        if self.item_id_to_keys is None:
+            raise ValueError('item_id_to_keys is required to load modality data from item ids.')
+
+        item_ids_cpu = item_ids.detach().cpu().view(-1).tolist()
+        env = self._open_lmdb(db_path, cache_name)
+
+        if mode == 'image':
+            shape = (len(item_ids_cpu), 3, self.args.image_resize, self.args.image_resize)
+        elif mode == 'video':
+            shape = (len(item_ids_cpu), self.args.frame_no, 3, 224, 224)
+        elif mode == 'video_feature':
+            shape = (len(item_ids_cpu), 400)
+        else:
+            raise ValueError(f'unsupported lmdb mode: {mode}')
+
+        output = np.zeros(shape, dtype=np.float32)
+        with env.begin() as txn:
+            for idx, item_id in enumerate(item_ids_cpu):
+                if item_id == 0:
+                    continue
+                byteflow = txn.get(self.item_id_to_keys[item_id].encode())
+                if byteflow is None:
+                    continue
+                data = pickle.loads(byteflow)
+                if mode == 'image':
+                    output[idx] = np.copy(np.frombuffer(data.image, dtype=np.float32)).reshape(3, 224, 224)
+                elif mode == 'video':
+                    output[idx] = np.copy(np.frombuffer(data.video, dtype=np.float32)).reshape(self.args.frame_no, 3, 224, 224)
+                else:
+                    output[idx] = data
+        return torch.FloatTensor(output).to(local_rank)
+
+    def build_modality_inputs_from_ids(self, sample_items_id, local_rank):
+        sample_items_text = None
+        sample_items_image = None
+        sample_items_video = None
+
+        if self.args.item_tower in ('modal', 'text', 'text_image', 'text_video'):
+            sample_items_text = self.get_text_inputs_from_ids(sample_items_id, local_rank)
+
+        if self.args.item_tower in ('modal', 'image', 'text_image'):
+            image_db_path = os.path.join(self.args.root_data_dir, self.args.dataset, self.args.image_data)
+            sample_items_image = self._load_lmdb_items(sample_items_id, image_db_path, '_image_env', 'image', local_rank)
+
+        if self.args.item_tower in ('modal', 'video', 'text_video'):
+            if self.args.video_feature_path in [None, 'None', 'none', '']:
+                video_db_path = os.path.join(self.args.root_data_dir, self.args.dataset, self.args.video_data)
+                sample_items_video = self._load_lmdb_items(sample_items_id, video_db_path, '_video_env', 'video', local_rank)
+            else:
+                video_db_path = os.path.expanduser(self.args.video_feature_path)
+                sample_items_video = self._load_lmdb_items(sample_items_id, video_db_path, '_video_env', 'video_feature', local_rank)
+
+        return sample_items_text, sample_items_image, sample_items_video
+
     def alignment(self, x, y):
         x, y = F.normalize(x, dim=-1), F.normalize(y, dim=-1)
         return (x - y).norm(p=2, dim=1).pow(2).mean()
@@ -224,8 +363,10 @@ class Model(torch.nn.Module):
         seq_lengths = seq_mask.sum(dim=1).clamp(min=1.0)
         return (seq_embs * seq_mask).sum(dim=1) / seq_lengths
 
-    def forward(self, sample_items_id, sample_items_text, sample_items_image, sample_items_video, log_mask, local_rank, args):
+    def encode_item_sequence(self, sample_items_id, sample_items_text, sample_items_image, sample_items_video, log_mask, local_rank, args):
         self.pop_prob_list = self.pop_prob_list.to(local_rank)
+        if sample_items_text is None and sample_items_image is None and sample_items_video is None and args.item_tower != 'id':
+            sample_items_text, sample_items_image, sample_items_video = self.build_modality_inputs_from_ids(sample_items_id, local_rank)
         debias_logits = torch.log(self.pop_prob_list[sample_items_id.view(-1)])
 
         sequence_fused_embs = None
@@ -345,20 +486,20 @@ class Model(torch.nn.Module):
             score_embs = self.id_encoder(sample_items_id)
 
         input_embs = score_embs.view(-1, self.max_seq_len + 1, self.args.embedding_dim) if sequence_fused_embs is None else sequence_fused_embs
+        return input_embs, score_embs, debias_logits, text_video_loss, text_video_item_loss, text_video_seq_loss
+
+    def encode_user_sequence(self, input_embs, log_mask, local_rank):
         if self.args.model == 'sasrec':
             prec_vec = self.user_encoder(input_embs[:, :-1, :], log_mask, local_rank)
         else:
             prec_vec = self.user_encoder(input_embs[:, :-1, :])
-        prec_vec = prec_vec.reshape(-1, self.args.embedding_dim)
+        return prec_vec.reshape(-1, self.args.embedding_dim)
 
-        ######################################  IN-BATCH CROSS-ENTROPY LOSS  ######################################
-        # logits = torch.matmul(F.normalize(prec_vec, dim=-1), F.normalize(score_embs, dim=-1).t()) # (bs * max_seq_len, bs * (max_seq_len + 1))
-        # logits = logits / self.args.tau - debias_logits
+    def compute_rec_loss(self, prec_vec, score_embs, debias_logits, sample_items_id, log_mask, local_rank):
         logits = torch.matmul(prec_vec, score_embs.t())
         logits = logits - debias_logits
 
-        ###################################### MASK USELESS ITEM ######################################
-        bs, seq_len = log_mask.size(0), log_mask.size(1)
+        bs, seq_len = log_mask.size()
         label = torch.arange(bs * (seq_len + 1)).reshape(bs, seq_len + 1)
         label = label[:, 1:].to(local_rank).view(-1)
 
@@ -369,12 +510,27 @@ class Model(torch.nn.Module):
         history_item_mask = (user_history == flatten_item_seq).any(dim=1)
         history_item_mask = history_item_mask.repeat_interleave(seq_len, dim=0)
         unused_item_mask = torch.scatter(history_item_mask, 1, label.view(-1, 1), False)
-        
+
         logits[unused_item_mask] = -1e4
         indices = torch.where(log_mask.view(-1) != 0)
         logits = logits.view(bs * seq_len, -1)
         rec_loss = self.criterion(logits[indices], label[indices])
+
         loss = rec_loss
+        user = prec_vec.view(-1, self.max_seq_len, self.args.embedding_dim)[:, -1, :]
+        item = score_embs.view(-1, self.max_seq_len + 1, self.args.embedding_dim)[:, -1, :]
+        align = self.alignment(user, item)
+        uniform = (self.uniformity(user) + self.uniformity(item)) / 2
+        return loss, rec_loss, align, uniform
+
+    def forward(self, sample_items_id, sample_items_text, sample_items_image, sample_items_video, log_mask, local_rank, args):
+        input_embs, score_embs, debias_logits, text_video_loss, text_video_item_loss, text_video_seq_loss = \
+            self.encode_item_sequence(sample_items_id, sample_items_text, sample_items_image, sample_items_video, log_mask, local_rank, args)
+
+        prec_vec = self.encode_user_sequence(input_embs, log_mask, local_rank)
+
+        loss, rec_loss, align, uniform = self.compute_rec_loss(prec_vec, score_embs, debias_logits, sample_items_id, log_mask, local_rank)
+
         if text_video_loss is not None:
             loss = loss + self.args.text_video_lambda * text_video_loss
         else:
@@ -390,12 +546,6 @@ class Model(torch.nn.Module):
         else:
             text_video_seq_loss = loss.new_zeros(())
 
-        ###################################### CALCULATE ALIGNMENT AND UNIFORMITY ######################################
-        user = prec_vec.view(-1, self.max_seq_len, self.args.embedding_dim)[:, -1, :]
-        item = score_embs.view(-1, self.max_seq_len + 1, self.args.embedding_dim)[:, -1, :]
-        align = self.alignment(user, item)
-        uniform = (self.uniformity(user) + self.uniformity(item)) / 2
-        
         return (
             loss,
             align,
